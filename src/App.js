@@ -26,7 +26,7 @@ const STYLES = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@
 .tabs{display:flex;padding:0 12px;border-bottom:1px solid var(--border)}
 .tab{flex:1;padding:11px 4px;border:none;background:none;color:var(--muted);font-family:'Syne',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;letter-spacing:0.3px}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.content{padding:12px;padding-bottom:90px;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.content{padding:12px;padding-bottom:90px;flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;margin-top:6px}
 .sec-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
 .log-entry{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between}
