@@ -167,6 +167,7 @@ function IngredientModal({ onSave, onClose, existing }) {
   const [cameraOpen, setCameraOpen] = useState(false);
   const videoRef = useRef(null);
   const readerRef = useRef(null);
+  const scannedRef = useRef(false);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
@@ -193,26 +194,31 @@ function IngredientModal({ onSave, onClose, existing }) {
   };
 
   const closeCamera = () => {
-    if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; }
+    try { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } } catch {}
     setCameraOpen(false);
   };
 
-  const openCamera = async () => {
+  const openCamera = () => {
     setCameraOpen(true);
   };
 
   useEffect(() => {
     if (!cameraOpen || !videoRef.current) return;
+    scannedRef.current = false;
     const reader = new BrowserMultiFormatReader();
     readerRef.current = reader;
     reader.decodeFromConstraints(
       { video: { facingMode: "environment" } },
       videoRef.current,
-      (result, err) => {
-        if (result) {
+      (result, _err) => {
+        if (result && !scannedRef.current) {
+          scannedRef.current = true;
           const val = result.getText();
-          closeCamera();
+          // Set state and call lookup BEFORE resetting the reader.
+          // Calling reset() synchronously inside this callback throws; the
+          // effect cleanup below handles teardown after the state update.
           setBarcode(val);
+          setCameraOpen(false);
           lookupBarcode(val);
         }
       }
@@ -220,7 +226,9 @@ function IngredientModal({ onSave, onClose, existing }) {
       alert("Camera access denied");
       setCameraOpen(false);
     });
-    return () => { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } };
+    return () => {
+      try { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } } catch {}
+    };
   }, [cameraOpen]); // eslint-disable-line
 
   useEffect(() => () => closeCamera(), []); // eslint-disable-line
