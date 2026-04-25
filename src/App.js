@@ -8,7 +8,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const STYLES = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0} html,body{height:100%;overflow:hidden}
 :root{--bg:#080c0a;--surface:#0f1410;--card:#161c17;--border:#232d24;--accent:#c8f135;--accent-dim:rgba(200,241,53,0.1);--accent-glow:rgba(200,241,53,0.25);--text:#e8f0e9;--muted:#4a5e4b;--protein:#4ade80;--carbs:#60a5fa;--fat:#fb923c;--danger:#ff6b6b}
-.app{background:var(--bg);height:100%;display:flex;flex-direction:column;font-family:'Syne',sans-serif;color:var(--text);max-width:480px;margin:0 auto;overflow:hidden}
+.app{background:var(--bg);height:100vh;display:flex;flex-direction:column;font-family:'Syne',sans-serif;color:var(--text);max-width:480px;margin:0 auto;overflow:hidden}
 .header{padding:18px 16px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .logo{font-size:19px;font-weight:800;letter-spacing:-0.5px} .logo span{color:var(--accent)}
 .icon-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;padding:4px;line-height:1;transition:color 0.2s} .icon-btn:hover{color:var(--text)}
@@ -452,11 +452,9 @@ export default function App() {
         setMeals(DEFAULT_MEALS);
         await Promise.all(DEFAULT_MEALS.map(m => supabase.from("meals").upsert({ id: m.id, user_id: uid, data: m })));
       }
-      if (logRows?.length) {
-        const logObj = {};
-        logRows.forEach(r => { logObj[r.id] = r.data; });
-        setLog(logObj);
-      }
+      const logObj = {};
+      (logRows || []).forEach(r => { logObj[r.id] = r.data || []; });
+      setLog(logObj);
       if (tgtRow) setTargets(tgtRow.data);
       setLoading(false);
     })();
@@ -509,47 +507,49 @@ export default function App() {
       <style>{STYLES}</style>
       {toast && <div className={`toast ${toast === "saved" ? "toast-ok" : "toast-err"}`}>{toast === "saved" ? "💾 Saved" : "⚠️ Save failed"}</div>}
       <div className="app">
-        <div className="header">
-          <div className="logo">MACRO<span>TRACK</span></div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "Space Mono,monospace", fontSize: 11, color: "var(--muted)" }}>{fmtDate(today)}</span>
-            <button className="icon-btn" onClick={() => setModal("targets")}>⚙</button>
-            <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => supabase.auth.signOut()} title="Sign out">⏏</button>
-          </div>
-        </div>
-
-        <div className="summary">
-          <div className="cal-row">
-            <span className="cal-num">{Math.round(totals.cal)}</span>
-            <span className="cal-sub">kcal</span>
-            <span className="cal-target">/ {targets.cal}</span>
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ width: "100%", height: 8, background: "var(--card)", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 4, background: totals.cal > targets.cal ? "var(--danger)" : "var(--accent)", width: `${Math.min((totals.cal / Math.max(targets.cal, 1)) * 100, 100)}%`, transition: "width 0.4s ease" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontFamily: "Space Mono,monospace", fontSize: 10, color: "var(--muted)" }}>
-              <span>{Math.round((totals.cal / Math.max(targets.cal, 1)) * 100)}% of goal</span>
-              <span>{Math.max(targets.cal - Math.round(totals.cal), 0)} remaining</span>
+        <div style={{ flexShrink: 0 }}>
+          <div className="header">
+            <div className="logo">MACRO<span>TRACK</span></div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "Space Mono,monospace", fontSize: 11, color: "var(--muted)" }}>{fmtDate(today)}</span>
+              <button className="icon-btn" onClick={() => setModal("targets")}>⚙</button>
+              <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => supabase.auth.signOut()} title="Sign out">⏏</button>
             </div>
           </div>
-          <div className="macro-bars">
-            <MacroBar label="Protein" val={totals.protein} target={targets.protein} color="var(--protein)" />
-            <MacroBar label="Carbs"   val={totals.carbs}   target={targets.carbs}   color="var(--carbs)"   />
-            <MacroBar label="Fat"     val={totals.fat}     target={targets.fat}     color="var(--fat)"     />
-          </div>
-          <div className="deficit">
-            <span style={{ color: "var(--muted)" }}>Remaining</span>
-            <span style={{ color: deficit >= 0 ? "var(--accent)" : "var(--danger)" }}>{deficit >= 0 ? deficit : `+${Math.abs(deficit)}`} kcal</span>
-          </div>
-        </div>
 
-        <div className="tabs">
-          {["today", "meals", "ingredients", "history"].map(t => (
-            <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-            </button>
-          ))}
+          <div className="summary">
+            <div className="cal-row">
+              <span className="cal-num">{Math.round(totals.cal)}</span>
+              <span className="cal-sub">kcal</span>
+              <span className="cal-target">/ {targets.cal}</span>
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ width: "100%", height: 8, background: "var(--card)", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", borderRadius: 4, background: totals.cal > targets.cal ? "var(--danger)" : "var(--accent)", width: `${Math.min((totals.cal / Math.max(targets.cal, 1)) * 100, 100)}%`, transition: "width 0.4s ease" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontFamily: "Space Mono,monospace", fontSize: 10, color: "var(--muted)" }}>
+                <span>{Math.round((totals.cal / Math.max(targets.cal, 1)) * 100)}% of goal</span>
+                <span>{Math.max(targets.cal - Math.round(totals.cal), 0)} remaining</span>
+              </div>
+            </div>
+            <div className="macro-bars">
+              <MacroBar label="Protein" val={totals.protein} target={targets.protein} color="var(--protein)" />
+              <MacroBar label="Carbs"   val={totals.carbs}   target={targets.carbs}   color="var(--carbs)"   />
+              <MacroBar label="Fat"     val={totals.fat}     target={targets.fat}     color="var(--fat)"     />
+            </div>
+            <div className="deficit">
+              <span style={{ color: "var(--muted)" }}>Remaining</span>
+              <span style={{ color: deficit >= 0 ? "var(--accent)" : "var(--danger)" }}>{deficit >= 0 ? deficit : `+${Math.abs(deficit)}`} kcal</span>
+            </div>
+          </div>
+
+          <div className="tabs">
+            {["today", "meals", "ingredients", "history"].map(t => (
+              <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="content" onClick={() => setEditingHistoryDay(null)}>
