@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = "https://srhtsnoufelxirqaxoqh.supabase.co";
@@ -163,16 +163,20 @@ function IngredientModal({ onSave, onClose, existing }) {
     : { name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const [barcode, setBarcode] = useState("");
   const [barcodeStatus, setBarcodeStatus] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const scannerRef = useRef(null);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
   const factor = 100 / amt;
   const valid = form.name && (pro || carb || fat);
 
-  const lookupBarcode = async () => {
-    if (!barcode.trim()) return;
+  const lookupBarcode = async (codeOverride) => {
+    const code = (codeOverride != null ? codeOverride : barcode).trim();
+    if (!code) return;
     setBarcodeStatus("loading");
-    const code = barcode.trim();
     const variants = [...new Set([code, "0" + code, code.replace(/^0+/, "")])];
     for (const c of variants) {
       try {
@@ -188,6 +192,50 @@ function IngredientModal({ onSave, onClose, existing }) {
     setBarcodeStatus("err");
   };
 
+  const closeCamera = () => {
+    if (scannerRef.current) { clearInterval(scannerRef.current); scannerRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    setCameraOpen(false);
+  };
+
+  const openCamera = async () => {
+    if (!("BarcodeDetector" in window)) {
+      alert("Camera scanning not supported on this browser, please type the barcode manually");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch (e) {
+      alert("Camera access denied");
+    }
+  };
+
+  useEffect(() => {
+    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
+    videoRef.current.srcObject = streamRef.current;
+    videoRef.current.play();
+    const detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"] });
+    scannerRef.current = setInterval(async () => {
+      if (!videoRef.current) return;
+      try {
+        const codes = await detector.detect(videoRef.current);
+        if (codes.length > 0) {
+          const val = codes[0].rawValue;
+          clearInterval(scannerRef.current); scannerRef.current = null;
+          if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+          setCameraOpen(false);
+          setBarcode(val);
+          lookupBarcode(val);
+        }
+      } catch {}
+    }, 300);
+    return () => { clearInterval(scannerRef.current); scannerRef.current = null; };
+  }, [cameraOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => closeCamera(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -195,10 +243,13 @@ function IngredientModal({ onSave, onClose, existing }) {
         <label className="lbl">Barcode lookup (optional)</label>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input className="inp" style={{ margin: 0, flex: 1 }} type="text" placeholder="e.g. 850791002000" value={barcode} onChange={e => { setBarcode(e.target.value); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode()} />
-          <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={lookupBarcode} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "🔍 Scan"}</button>
+          <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode()} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
         </div>
-        {barcodeStatus === "ok"  && <div style={{ background: "var(--accent-dim)", border: "1px solid rgba(200,241,53,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>✅ Found! Check fields below.</div>}
-        {barcodeStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>❌ Not found — enter manually.</div>}
+        {barcodeStatus === "ok"  && <div style={{ background: "var(--accent-dim)", border: "1px solid rgba(200,241,53,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>Found! Check fields below.</div>}
+        {barcodeStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Not found — enter manually.</div>}
         <div style={{ height: 1, background: "var(--border)", margin: "4px 0 14px" }} />
         <label className="lbl">Name</label>
         <input className="inp" placeholder="e.g. Chicken Breast" value={form.name} onChange={set("name")} />
@@ -225,6 +276,12 @@ function IngredientModal({ onSave, onClose, existing }) {
           <button className="btn btn-primary" disabled={!valid} onClick={() => onSave({ id: existing?.id || uid(), name: form.name, p100: { cal: Math.round(calcCal * factor), protein: round1(pro * factor), carbs: round1(carb * factor), fat: round1(fat * factor) } })}>Save</button>
         </div>
       </div>
+      {cameraOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={closeCamera}>
+          <video ref={videoRef} style={{ width: "100%", maxHeight: "70vh", objectFit: "cover" }} playsInline muted />
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 16, fontFamily: "Syne,sans-serif" }}>Point at barcode · tap to cancel</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -332,7 +389,7 @@ function LogModal({ onSave, onClose, meals, ingredients }) {
           <button className={`toggle ${tab === "quick" ? "active" : ""}`} onClick={() => setTab("quick")}>Quick Add</button>
         </div>
         {tab === "saved" && (<>
-          {meals.length === 0 && <div className="empty"><div className="empty-icon">🍽</div><div className="empty-text">No saved meals yet.</div></div>}
+          {meals.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div><div className="empty-text">No saved meals yet.</div></div>}
           {!selectedMeal && meals.map(m => {
             const mac = calcMealMacros(m, ingredients);
             return (<div key={m.id} className="meal-card" onClick={() => setSelectedMeal(m)}>
@@ -537,7 +594,7 @@ export default function App() {
             <div className="logo">MACRO<span>TRACK</span></div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontFamily: "Space Mono,monospace", fontSize: 11, color: "var(--muted)" }}>{fmtDate(today)}</span>
-              <button className="icon-btn" onClick={() => setModal("targets")}>⚙</button>
+              <button className="icon-btn" onClick={() => setModal("targets")}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
               <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => supabase.auth.signOut()} title="Sign out">⏏</button>
             </div>
           </div>
@@ -581,7 +638,7 @@ export default function App() {
 
           {tab === "today" && (<>
             <div className="sec-hdr"><span className="sec-title">Today's Log</span></div>
-            {todayLog.length === 0 && <div className="empty"><div className="empty-icon">🥗</div><div className="empty-text">Nothing logged yet.<br />Tap + to add food.</div></div>}
+            {todayLog.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="12" y1="9" x2="12" y2="15"/></svg></div><div className="empty-text">Nothing logged yet.<br />Tap + to add food.</div></div>}
             {todayLog.map(e => (
               <div key={e.id} className="log-entry">
                 <div><div className="entry-name">{e.name}</div><div className="entry-macros">P {e.protein}g · C {e.carbs}g · F {e.fat}g</div></div>
@@ -598,7 +655,7 @@ export default function App() {
               <span className="sec-title">Saved Meals</span>
               <button className="btn btn-primary btn-sm" onClick={() => { setEditMeal(null); setModal("meal"); }}>+ New</button>
             </div>
-            {meals.length === 0 && <div className="empty"><div className="empty-icon">🍳</div><div className="empty-text">No meals yet.</div></div>}
+            {meals.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><div className="empty-text">No meals yet.</div></div>}
             {meals.map(m => {
               const mac = calcMealMacros(m, ingredients);
               return (
@@ -622,7 +679,7 @@ export default function App() {
               <span className="sec-title">Ingredient Library</span>
               <button className="btn btn-primary btn-sm" onClick={() => { setEditIng(null); setModal("ingredient"); }}>+ New</button>
             </div>
-            {ingredients.length === 0 && <div className="empty"><div className="empty-icon">🥩</div><div className="empty-text">No ingredients yet.</div></div>}
+            {ingredients.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2c-4 4.5-8 8-8 12a8 8 0 0 0 16 0c0-4-4-7.5-8-12z"/><line x1="12" y1="14" x2="12" y2="22"/></svg></div><div className="empty-text">No ingredients yet.</div></div>}
             {ingredients.map(i => (
               <div key={i.id} className="log-entry">
                 <div><div className="entry-name">{i.name}</div><div className="entry-macros">per 100g · P {i.p100.protein}g · C {i.p100.carbs}g · F {i.p100.fat}g</div></div>
@@ -637,7 +694,7 @@ export default function App() {
 
           {tab === "history" && (() => {
             const pastDays = Object.keys(log).filter(d => d !== today).sort((a, b) => b.localeCompare(a));
-            if (!pastDays.length) return <div className="empty"><div className="empty-icon">📅</div><div className="empty-text">No history yet.<br />Past days will appear here.</div></div>;
+            if (!pastDays.length) return <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div className="empty-text">No history yet.<br />Past days will appear here.</div></div>;
             return pastDays.map(d => {
               const entries = log[d] || [];
               const tot = entries.reduce((a, e) => ({ cal: a.cal + e.cal, protein: a.protein + e.protein, carbs: a.carbs + e.carbs, fat: a.fat + e.fat }), { cal: 0, protein: 0, carbs: 0, fat: 0 });
@@ -689,7 +746,7 @@ export default function App() {
         {tab === "today"       && <button className="fab" onClick={() => setModal("log")}>+</button>}
         {tab === "meals"       && <button className="fab" onClick={() => { setEditMeal(null); setModal("meal"); }}>+</button>}
         {tab === "ingredients" && <button className="fab" onClick={() => { setEditIng(null); setModal("ingredient"); }}>+</button>}
-        {tab === "history"     && <button className="fab" onClick={() => setTab("today")}>↩</button>}
+        {tab === "history"     && <button className="fab" onClick={() => setTab("today")}>←</button>}
 
         {modal === "log"        && <LogModal meals={meals} ingredients={ingredients} onSave={historyLogDate ? handleHistoryLogEntry : handleLogEntry} onClose={() => { setModal(null); setHistoryLogDate(null); }} />}
         {modal === "meal"       && <MealModal allIngredients={ingredients} existing={editMeal} onSave={handleSaveMeal} onClose={() => { setModal(null); setEditMeal(null); }} />}
