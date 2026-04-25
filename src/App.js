@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 
 const SUPABASE_URL = "https://srhtsnoufelxirqaxoqh.supabase.co";
 const SUPABASE_KEY = "sb_publishable_UYwe1Vi2ce2XVcqFMqGcDA_dDo84Exh";
@@ -165,8 +166,7 @@ function IngredientModal({ onSave, onClose, existing }) {
   const [barcodeStatus, setBarcodeStatus] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const scannerRef = useRef(null);
+  const readerRef = useRef(null);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
@@ -193,45 +193,34 @@ function IngredientModal({ onSave, onClose, existing }) {
   };
 
   const closeCamera = () => {
-    if (scannerRef.current) { clearInterval(scannerRef.current); scannerRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; }
     setCameraOpen(false);
   };
 
   const openCamera = async () => {
-    if (!("BarcodeDetector" in window)) {
-      alert("Camera scanning not supported on this browser, please type the barcode manually");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      streamRef.current = stream;
-      setCameraOpen(true);
-    } catch (e) {
-      alert("Camera access denied");
-    }
+    setCameraOpen(true);
   };
 
   useEffect(() => {
-    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
-    videoRef.current.srcObject = streamRef.current;
-    videoRef.current.play();
-    const detector = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"] });
-    scannerRef.current = setInterval(async () => {
-      if (!videoRef.current) return;
-      try {
-        const codes = await detector.detect(videoRef.current);
-        if (codes.length > 0) {
-          const val = codes[0].rawValue;
-          clearInterval(scannerRef.current); scannerRef.current = null;
-          if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-          setCameraOpen(false);
+    if (!cameraOpen || !videoRef.current) return;
+    const reader = new BrowserMultiFormatReader();
+    readerRef.current = reader;
+    reader.decodeFromConstraints(
+      { video: { facingMode: "environment" } },
+      videoRef.current,
+      (result, err) => {
+        if (result) {
+          const val = result.getText();
+          closeCamera();
           setBarcode(val);
           lookupBarcode(val);
         }
-      } catch {}
-    }, 300);
-    return () => { clearInterval(scannerRef.current); scannerRef.current = null; };
+      }
+    ).catch(() => {
+      alert("Camera access denied");
+      setCameraOpen(false);
+    });
+    return () => { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } };
   }, [cameraOpen]); // eslint-disable-line
 
   useEffect(() => () => closeCamera(), []); // eslint-disable-line
