@@ -232,9 +232,9 @@ function IngredientModal({ onSave, onClose, existing }) {
       } catch {}
     }, 300);
     return () => { clearInterval(scannerRef.current); scannerRef.current = null; };
-  }, [cameraOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cameraOpen]); // eslint-disable-line
 
-  useEffect(() => () => closeCamera(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => closeCamera(), []); // eslint-disable-line
 
   return (
     <div className="overlay" onClick={onClose}>
