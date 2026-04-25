@@ -435,7 +435,7 @@ export default function App() {
     const uid = session.user.id;
     (async () => {
       setLoading(true);
-      const [{ data: ingRows }, { data: mealRows }, { data: logRows }, { data: tgtRow }] = await Promise.all([
+      const [{ data: ingRows }, { data: mealRows }, { data: logRows, error: logError }, { data: tgtRow }] = await Promise.all([
         supabase.from("ingredients").select("*").eq("user_id", uid),
         supabase.from("meals").select("*").eq("user_id", uid),
         supabase.from("food_log").select("*").eq("user_id", uid),
@@ -452,8 +452,33 @@ export default function App() {
         setMeals(DEFAULT_MEALS);
         await Promise.all(DEFAULT_MEALS.map(m => supabase.from("meals").upsert({ id: m.id, user_id: uid, data: m })));
       }
+
+      if (logError) console.error("food_log fetch error:", logError);
+
       const logObj = {};
       (logRows || []).forEach(r => { logObj[r.id] = r.data || []; });
+
+      const SEED = {
+        "2026-04-21": [
+          { id: "s21a", name: "🍗 Honey Chilli Chicken + Rice", cal: 769, protein: 73,   carbs: 88.9, fat: 10.6 },
+          { id: "s21b", name: "🍫 Protein Bar",                  cal: 150, protein: 28,   carbs: 12,   fat: 2    },
+          { id: "s21c", name: "🥪 Sandwich",                     cal: 245, protein: 26,   carbs: 18,   fat: 8.5  },
+        ],
+        "2026-04-22": [
+          { id: "s22a", name: "🍗 Honey Chilli Chicken + Rice", cal: 769, protein: 73,   carbs: 88.9, fat: 10.6 },
+          { id: "s22b", name: "🌮 Taco Beef Pita",              cal: 314, protein: 29,   carbs: 22,   fat: 13.5 },
+          { id: "s22c", name: "🍿 Protein Chips (1 bag)",       cal: 140, protein: 19,   carbs: 5,    fat: 5    },
+        ],
+      };
+      const seedUpserts = [];
+      for (const [date, entries] of Object.entries(SEED)) {
+        if (!logObj[date]) {
+          logObj[date] = entries;
+          seedUpserts.push(supabase.from("food_log").upsert({ id: date, user_id: uid, data: entries }));
+        }
+      }
+      if (seedUpserts.length) await Promise.all(seedUpserts);
+
       setLog(logObj);
       if (tgtRow) setTargets(tgtRow.data);
       setLoading(false);
