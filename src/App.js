@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import { BrowserMultiFormatReader } from "@zxing/library";
 
 const SUPABASE_URL = "https://srhtsnoufelxirqaxoqh.supabase.co";
 const SUPABASE_KEY = "sb_publishable_UYwe1Vi2ce2XVcqFMqGcDA_dDo84Exh";
@@ -166,8 +166,8 @@ function IngredientModal({ onSave, onClose, existing }) {
   const [barcodeStatus, setBarcodeStatus] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const videoRef = useRef(null);
-  const readerRef = useRef(null);
-  const scannedRef = useRef(false);
+  const streamRef = useRef(null);
+  const intervalRef = useRef(null);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
@@ -194,40 +194,44 @@ function IngredientModal({ onSave, onClose, existing }) {
   };
 
   const closeCamera = () => {
-    try { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } } catch {}
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setCameraOpen(false);
   };
 
-  const openCamera = () => {
-    setCameraOpen(true);
+  const openCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch {
+      alert("Camera access denied");
+    }
   };
 
   useEffect(() => {
-    if (!cameraOpen || !videoRef.current) return;
-    scannedRef.current = false;
+    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
+    const video = videoRef.current;
+    video.srcObject = streamRef.current;
+    video.play();
     const reader = new BrowserMultiFormatReader();
-    readerRef.current = reader;
-    reader.decodeFromConstraints(
-      { video: { facingMode: "environment" } },
-      videoRef.current,
-      (result, _err) => {
-        if (result && !scannedRef.current) {
-          scannedRef.current = true;
-          const val = result.getText();
-          // Set state and call lookup BEFORE resetting the reader.
-          // Calling reset() synchronously inside this callback throws; the
-          // effect cleanup below handles teardown after the state update.
-          setBarcode(val);
-          setCameraOpen(false);
-          lookupBarcode(val);
-        }
+    intervalRef.current = setInterval(() => {
+      if (!video.videoWidth || !video.videoHeight) return;
+      try {
+        const result = reader.decode(video);
+        const val = result.getText();
+        clearInterval(intervalRef.current); intervalRef.current = null;
+        if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+        setCameraOpen(false);
+        setBarcode(val);
+        lookupBarcode(val);
+      } catch {
+        // NotFoundException on every frame with no barcode — keep scanning
       }
-    ).catch(() => {
-      alert("Camera access denied");
-      setCameraOpen(false);
-    });
+    }, 500);
     return () => {
-      try { if (readerRef.current) { readerRef.current.reset(); readerRef.current = null; } } catch {}
+      clearInterval(intervalRef.current); intervalRef.current = null;
+      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     };
   }, [cameraOpen]); // eslint-disable-line
 
