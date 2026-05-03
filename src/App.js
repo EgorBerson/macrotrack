@@ -77,6 +77,101 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const fmtDate = d => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const round1 = n => Math.round(n * 10) / 10;
 
+const CameraIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+    <circle cx="12" cy="13" r="4"/>
+  </svg>
+);
+
+async function lookupOFF(rawCode) {
+  const code = rawCode.trim();
+  if (!code) return null;
+  const variants = [...new Set([code, "0" + code, code.replace(/^0+/, "")])];
+  for (const c of variants) {
+    try {
+      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${c}.json`);
+      const json = await res.json();
+      if (json.status === 1) {
+        const n = json.product.nutriments;
+        const protein = round1(n["proteins_100g"] || 0);
+        const carbs = round1(n["carbohydrates_100g"] || 0);
+        const fat = round1(n["fat_100g"] || 0);
+        let servingSize = 100;
+        if (json.product.serving_quantity) {
+          servingSize = Math.round(+json.product.serving_quantity) || 100;
+        } else if (json.product.serving_size) {
+          const m = String(json.product.serving_size).match(/(\d+(\.\d+)?)/);
+          if (m) servingSize = Math.round(+m[1]) || 100;
+        }
+        return { name: json.product.product_name || json.product.product_name_en || "", p100: { cal: Math.round(protein * 4 + carbs * 4 + fat * 9), protein, carbs, fat }, servingSize };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function useCameraScanner(onScan) {
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const intervalRef = useRef(null);
+  const onScanRef = useRef(onScan);
+  useEffect(() => { onScanRef.current = onScan; });
+
+  const closeCamera = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    setCameraOpen(false);
+  };
+
+  const openCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch {
+      alert("Camera access denied");
+    }
+  };
+
+  useEffect(() => {
+    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
+    const video = videoRef.current;
+    video.srcObject = streamRef.current;
+    video.play();
+    const reader = new BrowserMultiFormatReader();
+    intervalRef.current = setInterval(() => {
+      if (!video.videoWidth || !video.videoHeight) return;
+      try {
+        const result = reader.decode(video);
+        const val = result.getText();
+        clearInterval(intervalRef.current); intervalRef.current = null;
+        if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+        setCameraOpen(false);
+        onScanRef.current(val);
+      } catch {}
+    }, 500);
+    return () => {
+      clearInterval(intervalRef.current); intervalRef.current = null;
+      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    };
+  }, [cameraOpen]); // eslint-disable-line
+
+  useEffect(() => () => closeCamera(), []); // eslint-disable-line
+
+  return { cameraOpen, openCamera, closeCamera, videoRef };
+}
+
+function CameraOverlay({ videoRef, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <video ref={videoRef} style={{ width: "100%", maxHeight: "70vh", objectFit: "cover" }} playsInline muted />
+      <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 16, fontFamily: "Syne,sans-serif" }}>Point at barcode · tap to cancel</div>
+    </div>
+  );
+}
+
 const DEFAULT_INGS = [
   { id: "chkdsh", name: "Honey Chilli Chicken",   p100: { cal: 135.6, protein: 17.7, carbs: 9.2,  fat: 2.6  } },
   { id: "wrice",  name: "White Rice (cooked)",     p100: { cal: 100,   protein: 1.67, carbs: 22.1, fat: 0.21 } },
@@ -101,10 +196,10 @@ const DEFAULT_MEALS = [
 function calcMealMacros(meal, ingredients) {
   if (meal.manual) return meal.manual;
   return meal.ingredients.reduce((acc, mi) => {
-    const ing = ingredients.find(i => i.id === mi.id);
-    if (!ing) return acc;
+    const p100 = mi.p100 || ingredients.find(i => i.id === mi.id)?.p100;
+    if (!p100) return acc;
     const r = mi.amount / 100;
-    return { cal: acc.cal + Math.round(ing.p100.cal * r), protein: round1(acc.protein + ing.p100.protein * r), carbs: round1(acc.carbs + ing.p100.carbs * r), fat: round1(acc.fat + ing.p100.fat * r) };
+    return { cal: acc.cal + Math.round(p100.cal * r), protein: round1(acc.protein + p100.protein * r), carbs: round1(acc.carbs + p100.carbs * r), fat: round1(acc.fat + p100.fat * r) };
   }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
 }
 
@@ -164,78 +259,28 @@ function IngredientModal({ onSave, onClose, existing }) {
     : { name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const [barcode, setBarcode] = useState("");
   const [barcodeStatus, setBarcodeStatus] = useState(null);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const intervalRef = useRef(null);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
   const factor = 100 / amt;
   const valid = form.name && (pro || carb || fat);
 
-  const lookupBarcode = async (codeOverride) => {
-    const code = (codeOverride != null ? codeOverride : barcode).trim();
-    if (!code) return;
+  const lookupBarcode = async (code) => {
+    if (!code?.trim()) return;
     setBarcodeStatus("loading");
-    const variants = [...new Set([code, "0" + code, code.replace(/^0+/, "")])];
-    for (const c of variants) {
-      try {
-        const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${c}.json`);
-        const json = await res.json();
-        if (json.status === 1) {
-          const n = json.product.nutriments;
-          setForm({ name: json.product.product_name || json.product.product_name_en || "", amount: "100", protein: round1(n["proteins_100g"] || 0), carbs: round1(n["carbohydrates_100g"] || 0), fat: round1(n["fat_100g"] || 0) });
-          setBarcodeStatus("ok"); return;
-        }
-      } catch {}
-    }
-    setBarcodeStatus("err");
-  };
-
-  const closeCamera = () => {
-    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    setCameraOpen(false);
-  };
-
-  const openCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      streamRef.current = stream;
-      setCameraOpen(true);
-    } catch {
-      alert("Camera access denied");
+    const found = await lookupOFF(code);
+    if (found) {
+      setForm({ name: found.name, amount: String(found.servingSize || 100), protein: found.p100.protein, carbs: found.p100.carbs, fat: found.p100.fat });
+      setBarcodeStatus("ok");
+    } else {
+      setBarcodeStatus("err");
     }
   };
 
-  useEffect(() => {
-    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
-    const video = videoRef.current;
-    video.srcObject = streamRef.current;
-    video.play();
-    const reader = new BrowserMultiFormatReader();
-    intervalRef.current = setInterval(() => {
-      if (!video.videoWidth || !video.videoHeight) return;
-      try {
-        const result = reader.decode(video);
-        const val = result.getText();
-        clearInterval(intervalRef.current); intervalRef.current = null;
-        if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-        setCameraOpen(false);
-        setBarcode(val);
-        lookupBarcode(val);
-      } catch {
-        // NotFoundException on every frame with no barcode — keep scanning
-      }
-    }, 500);
-    return () => {
-      clearInterval(intervalRef.current); intervalRef.current = null;
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    };
-  }, [cameraOpen]); // eslint-disable-line
-
-  useEffect(() => () => closeCamera(), []); // eslint-disable-line
+  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(val => {
+    setBarcode(val);
+    lookupBarcode(val);
+  });
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -243,11 +288,9 @@ function IngredientModal({ onSave, onClose, existing }) {
         <div className="modal-title">{existing ? "Edit" : "New"} Ingredient <button className="icon-btn" onClick={onClose}>✕</button></div>
         <label className="lbl">Barcode lookup (optional)</label>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" placeholder="e.g. 850791002000" value={barcode} onChange={e => { setBarcode(e.target.value); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode()} />
-          <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          </button>
-          <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode()} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
+          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" placeholder="e.g. 850791002000" value={barcode} onChange={e => { setBarcode(e.target.value); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
+          <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera"><CameraIcon /></button>
+          <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode(barcode)} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
         </div>
         {barcodeStatus === "ok"  && <div style={{ background: "var(--accent-dim)", border: "1px solid rgba(200,241,53,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>Found! Check fields below.</div>}
         {barcodeStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Not found — enter manually.</div>}
@@ -274,15 +317,10 @@ function IngredientModal({ onSave, onClose, existing }) {
         )}
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!valid} onClick={() => onSave({ id: existing?.id || uid(), name: form.name, p100: { cal: Math.round(calcCal * factor), protein: round1(pro * factor), carbs: round1(carb * factor), fat: round1(fat * factor) } })}>Save</button>
+          <button className="btn btn-primary" disabled={!valid} onClick={() => onSave({ id: existing?.id || uid(), name: form.name, servingSize: amt, p100: { cal: Math.round(calcCal * factor), protein: round1(pro * factor), carbs: round1(carb * factor), fat: round1(fat * factor) } })}>Save</button>
         </div>
       </div>
-      {cameraOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={closeCamera}>
-          <video ref={videoRef} style={{ width: "100%", maxHeight: "70vh", objectFit: "cover" }} playsInline muted />
-          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 16, fontFamily: "Syne,sans-serif" }}>Point at barcode · tap to cancel</div>
-        </div>
-      )}
+      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
     </div>
   );
 }
@@ -296,14 +334,43 @@ function MealModal({ onSave, onClose, allIngredients, existing }) {
   const [search, setSearch] = useState("");
   const [addingIng, setAddingIng] = useState(null);
   const [addAmt, setAddAmt] = useState("100");
+  const [scanStatus, setScanStatus] = useState(null);
+  const [showManualMeal, setShowManualMeal] = useState(false);
+  const [manualMealForm, setManualMealForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const setM = k => e => setManual(f => ({ ...f, [k]: e.target.value }));
+  const setMMF = k => e => setManualMealForm(f => ({ ...f, [k]: e.target.value }));
+  const manualMealCal = Math.round((+manualMealForm.protein || 0) * 4 + (+manualMealForm.carbs || 0) * 4 + (+manualMealForm.fat || 0) * 9);
+  const confirmManualMeal = () => {
+    if (!manualMealForm.name) return;
+    const amt = +manualMealForm.amount || 100;
+    const pro = +manualMealForm.protein || 0, carb = +manualMealForm.carbs || 0, fat = +manualMealForm.fat || 0;
+    const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
+    const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
+    setMealIngs(prev => [...prev, { id: uid(), name: manualMealForm.name, amount: amt, p100 }]);
+    setManualMealForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
+    setShowManualMeal(false);
+  };
   const filtered = allIngredients.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) && !mealIngs.find(m => m.id === i.id));
   const preview = mode === "manual"
     ? { cal: +manual.cal || 0, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 }
     : calcMealMacros({ ingredients: mealIngs }, allIngredients);
-  const confirmAdd = () => { if (!addingIng || !addAmt) return; setMealIngs(p => [...p, { id: addingIng.id, name: addingIng.name, amount: +addAmt }]); setAddingIng(null); setAddAmt("100"); setSearch(""); };
+  const confirmAdd = () => {
+    if (!addingIng || !addAmt) return;
+    const entry = { id: addingIng.id, name: addingIng.name, amount: +addAmt };
+    if (addingIng.p100) entry.p100 = addingIng.p100;
+    setMealIngs(p => [...p, entry]);
+    setAddingIng(null); setAddAmt("100"); setSearch("");
+  };
   const valid = name && (mode === "manual" ? manual.cal : mealIngs.length > 0);
   const save = () => onSave({ id: existing?.id || uid(), name, ingredients: mode === "ingredients" ? mealIngs : [], manual: mode === "manual" ? { cal: +manual.cal, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 } : null });
+
+  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
+    setScanStatus("loading");
+    const found = await lookupOFF(val);
+    if (found) { setScanStatus(null); setAddAmt(String(found.servingSize || 100)); setAddingIng({ id: uid(), name: found.name, p100: found.p100, servingSize: found.servingSize }); }
+    else setScanStatus("err");
+  });
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
@@ -316,9 +383,9 @@ function MealModal({ onSave, onClose, allIngredients, existing }) {
         </div>
         {mode === "ingredients" && (<>
           {mealIngs.map(mi => {
-            const ing = allIngredients.find(i => i.id === mi.id);
+            const p100 = mi.p100 || allIngredients.find(i => i.id === mi.id)?.p100;
             const r = mi.amount / 100;
-            const sc = ing ? { cal: Math.round(ing.p100.cal * r), protein: round1(ing.p100.protein * r), carbs: round1(ing.p100.carbs * r), fat: round1(ing.p100.fat * r) } : null;
+            const sc = p100 ? { cal: Math.round(p100.cal * r), protein: round1(p100.protein * r), carbs: round1(p100.carbs * r), fat: round1(p100.fat * r) } : null;
             return (
               <div key={mi.id} className="ing-chip" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -342,11 +409,34 @@ function MealModal({ onSave, onClose, allIngredients, existing }) {
                 <button className="btn btn-primary btn-sm" onClick={confirmAdd}>Add</button>
               </div>
             </div>
+          ) : showManualMeal ? (
+            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
+              <label className="lbl">Name</label>
+              <input className="inp" placeholder="Ingredient name" value={manualMealForm.name} onChange={setMMF("name")} autoFocus />
+              <div className="grid2">
+                <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualMealForm.amount} onChange={setMMF("amount")} /></div>
+                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualMealCal ? manualMealCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
+                <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.protein} onChange={setMMF("protein")} /></div>
+                <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.carbs} onChange={setMMF("carbs")} /></div>
+                <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.fat} onChange={setMMF("fat")} /></div>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualMeal(false); setManualMealForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
+                <button className="btn btn-primary btn-sm" disabled={!manualMealForm.name} onClick={confirmManualMeal}>Add</button>
+              </div>
+            </div>
           ) : (<>
-            <input className="inp" placeholder="Search ingredients…" value={search} onChange={e => setSearch(e.target.value)} />
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input className="inp" style={{ margin: 0, flex: 1 }} placeholder="Search ingredients…" value={search} onChange={e => { setSearch(e.target.value); setScanStatus(null); }} />
+              <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowManualMeal(true)}>Manual</button>
+            </div>
+            {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
+            {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
             {search && (<div className="ing-list">
               {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
-              {filtered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingIng(i); setSearch(""); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
+              {filtered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingIng(i); setAddAmt(String(i.servingSize || 100)); setSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
             </div>)}
           </>)}
         </>)}
@@ -367,6 +457,7 @@ function MealModal({ onSave, onClose, allIngredients, existing }) {
           <button className="btn btn-primary" disabled={!valid} onClick={save}>Save Meal</button>
         </div>
       </div>
+      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
     </div>
   );
 }
@@ -377,16 +468,54 @@ function LogModal({ onSave, onClose, meals, ingredients }) {
   const [selectedMeal, setSelectedMeal] = useState(null);
   const [servings, setServings] = useState("1");
   const [quick, setQuick] = useState({ name: "", cal: "", protein: "", carbs: "", fat: "" });
+  const [logItems, setLogItems] = useState([]);
+  const [ingSearch, setIngSearch] = useState("");
+  const [addingItem, setAddingItem] = useState(null);
+  const [addAmt, setAddAmt] = useState("100");
+  const [scanStatus, setScanStatus] = useState(null);
+  const [showManualLog, setShowManualLog] = useState(false);
+  const [manualLogForm, setManualLogForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const setQ = k => e => setQuick(f => ({ ...f, [k]: e.target.value }));
+  const setMLF = k => e => setManualLogForm(f => ({ ...f, [k]: e.target.value }));
+  const manualLogCal = Math.round((+manualLogForm.protein || 0) * 4 + (+manualLogForm.carbs || 0) * 4 + (+manualLogForm.fat || 0) * 9);
+  const confirmManualLog = () => {
+    if (!manualLogForm.name) return;
+    const amt = +manualLogForm.amount || 100;
+    const pro = +manualLogForm.protein || 0, carb = +manualLogForm.carbs || 0, fat = +manualLogForm.fat || 0;
+    const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
+    const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
+    setLogItems(prev => [...prev, { id: uid(), name: manualLogForm.name, amount: amt, p100 }]);
+    setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
+    setShowManualLog(false);
+  };
   const mealMacros = selectedMeal ? calcMealMacros(selectedMeal, ingredients) : null;
   const s = +servings || 1;
   const scaled = mealMacros ? { cal: Math.round(mealMacros.cal * s), protein: round1(mealMacros.protein * s), carbs: round1(mealMacros.carbs * s), fat: round1(mealMacros.fat * s) } : null;
+  const libFiltered = ingredients.filter(i => i.name.toLowerCase().includes(ingSearch.toLowerCase()));
+  const ingTotal = logItems.reduce((acc, item) => {
+    const r = item.amount / 100;
+    return { cal: acc.cal + Math.round(item.p100.cal * r), protein: round1(acc.protein + item.p100.protein * r), carbs: round1(acc.carbs + item.p100.carbs * r), fat: round1(acc.fat + item.p100.fat * r) };
+  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
+  const confirmLogItem = () => {
+    if (!addingItem || !addAmt) return;
+    setLogItems(p => [...p, { id: uid(), name: addingItem.name, p100: addingItem.p100, amount: +addAmt }]);
+    setAddingItem(null); setAddAmt("100"); setIngSearch("");
+  };
+
+  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
+    setScanStatus("loading");
+    const found = await lookupOFF(val);
+    if (found) { setScanStatus(null); setAddAmt(String(found.servingSize || 100)); setAddingItem({ name: found.name, p100: found.p100, servingSize: found.servingSize }); }
+    else setScanStatus("err");
+  });
+
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-title">Log Food <button className="icon-btn" onClick={onClose}>✕</button></div>
         <div className="toggle-group">
           <button className={`toggle ${tab === "saved" ? "active" : ""}`} onClick={() => { setTab("saved"); setSelectedMeal(null); }}>Saved Meals</button>
+          <button className={`toggle ${tab === "ingredients" ? "active" : ""}`} onClick={() => setTab("ingredients")}>Ingredients</button>
           <button className={`toggle ${tab === "quick" ? "active" : ""}`} onClick={() => setTab("quick")}>Quick Add</button>
         </div>
         {tab === "saved" && (<>
@@ -419,6 +548,72 @@ function LogModal({ onSave, onClose, meals, ingredients }) {
             </div>
           </>)}
         </>)}
+        {tab === "ingredients" && (<>
+          {addingItem ? (
+            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{addingItem.name}</div>
+              <label className="lbl">Amount (grams)</label>
+              <input className="inp" type="number" placeholder="100" value={addAmt} onChange={e => setAddAmt(e.target.value)} autoFocus />
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setAddingItem(null); setAddAmt("100"); }}>Cancel</button>
+                <button className="btn btn-primary btn-sm" onClick={confirmLogItem}>Add</button>
+              </div>
+            </div>
+          ) : showManualLog ? (
+            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
+              <label className="lbl">Name</label>
+              <input className="inp" placeholder="Ingredient name" value={manualLogForm.name} onChange={setMLF("name")} autoFocus />
+              <div className="grid2">
+                <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualLogForm.amount} onChange={setMLF("amount")} /></div>
+                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualLogCal ? manualLogCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
+                <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.protein} onChange={setMLF("protein")} /></div>
+                <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.carbs} onChange={setMLF("carbs")} /></div>
+                <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.fat} onChange={setMLF("fat")} /></div>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualLog(false); setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
+                <button className="btn btn-primary btn-sm" disabled={!manualLogForm.name} onClick={confirmManualLog}>Add</button>
+              </div>
+            </div>
+          ) : (<>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input className="inp" style={{ margin: 0, flex: 1 }} placeholder="Search ingredients…" value={ingSearch} onChange={e => { setIngSearch(e.target.value); setScanStatus(null); }} />
+              <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowManualLog(true)}>Manual</button>
+            </div>
+            {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
+            {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
+            {ingSearch && (<div className="ing-list">
+              {libFiltered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
+              {libFiltered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingItem(i); setAddAmt(String(i.servingSize || 100)); setIngSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
+            </div>)}
+          </>)}
+          {logItems.map(item => {
+            const cal = Math.round(item.p100.cal * item.amount / 100);
+            return (
+              <div key={item.id} className="ing-chip">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{item.name}</div>
+                  <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "Space Mono,monospace", marginTop: 2 }}>{item.amount}g · {cal} kcal</div>
+                </div>
+                <button className="del-btn" onClick={() => setLogItems(p => p.filter(x => x.id !== item.id))}>✕</button>
+              </div>
+            );
+          })}
+          {logItems.length > 0 && (
+            <div className="preview">
+              <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{ingTotal.cal}</span></span>
+              <span style={{ color: "var(--muted)" }}>PRO <span style={{ color: "var(--text)" }}>{round1(ingTotal.protein)}g</span></span>
+              <span style={{ color: "var(--muted)" }}>CARB <span style={{ color: "var(--text)" }}>{round1(ingTotal.carbs)}g</span></span>
+              <span style={{ color: "var(--muted)" }}>FAT <span style={{ color: "var(--text)" }}>{round1(ingTotal.fat)}g</span></span>
+            </div>
+          )}
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={logItems.length === 0} onClick={() => onSave({ id: uid(), name: `Custom · ${logItems.length} ingredient${logItems.length !== 1 ? "s" : ""}`, ...ingTotal })}>Log It</button>
+          </div>
+        </>)}
         {tab === "quick" && (<>
           <label className="lbl">Name</label>
           <input className="inp" placeholder="e.g. Protein Bar" value={quick.name} onChange={setQ("name")} />
@@ -434,6 +629,7 @@ function LogModal({ onSave, onClose, meals, ingredients }) {
           </div>
         </>)}
       </div>
+      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
     </div>
   );
 }
