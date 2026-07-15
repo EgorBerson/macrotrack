@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { round1, uid } from "../../utils";
-import lookupOFF from "../../services/openFoodFacts";
+import lookupOFF, { normalizeBarcode, validateBarcode } from "../../services/openFoodFacts";
 import useCameraScanner from "../../hooks/useCameraScanner";
 import CameraIcon from "../camera/CameraIcon";
 import CameraOverlay from "../camera/CameraOverlay";
+import BarcodeStatus from "../barcode/BarcodeStatus";
 
 export default function IngredientModal({ onSave, onClose, existing }) {
   const [form, setForm] = useState(existing
@@ -21,11 +22,16 @@ export default function IngredientModal({ onSave, onClose, existing }) {
   const save = async () => {
     if (!valid) return;
     setSaveError(null);
-    const normalizedBarcode = String(barcode || "").replace(/\D/g, "");
+    const normalizedBarcode = normalizeBarcode(barcode);
+    const barcodeValidation = normalizedBarcode ? validateBarcode(normalizedBarcode) : { ok: true };
+    if (!barcodeValidation.ok) {
+      setBarcodeStatus(barcodeValidation.reason);
+      return;
+    }
     const result = await onSave({
       id: existing?.id || uid(),
       name: form.name.trim(),
-      barcode: /^\d{8,14}$/.test(normalizedBarcode) ? normalizedBarcode : null,
+      barcode: normalizedBarcode || null,
       servingSize: amt,
       p100: { cal: Math.round(calcCal * factor), protein: round1(pro * factor), carbs: round1(carb * factor), fat: round1(fat * factor) },
     });
@@ -33,33 +39,31 @@ export default function IngredientModal({ onSave, onClose, existing }) {
   };
 
   const lookupBarcode = async (code) => {
-    const normalizedCode = String(code || "").replace(/\D/g, "");
-    if (!/^\d{8,14}$/.test(normalizedCode)) {
-      setBarcodeStatus("invalid");
-      return false;
-    }
+    const validation = validateBarcode(code);
+    const normalizedCode = normalizeBarcode(code);
     setBarcode(normalizedCode);
+    if (!validation.ok) {
+      setBarcodeStatus(validation.reason);
+      return validation;
+    }
     setBarcodeStatus("loading");
-    const found = await lookupOFF(normalizedCode);
-    if (found) {
-      const servingSize = found.servingSize || 100;
+    const result = await lookupOFF(normalizedCode);
+    setBarcodeStatus(result.reason);
+    if (result.ok) {
+      const servingSize = result.servingSize || 100;
       const servingRatio = servingSize / 100;
       setForm({
-        name: found.name,
+        name: result.name,
         amount: String(servingSize),
-        protein: round1(found.p100.protein * servingRatio),
-        carbs: round1(found.p100.carbs * servingRatio),
-        fat: round1(found.p100.fat * servingRatio),
+        protein: round1(result.p100.protein * servingRatio),
+        carbs: round1(result.p100.carbs * servingRatio),
+        fat: round1(result.p100.fat * servingRatio),
       });
-      setBarcodeStatus("ok");
-      return true;
-    } else {
-      setBarcodeStatus("err");
-      return false;
     }
+    return result;
   };
 
-  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, videoRef } = useCameraScanner(val => {
+  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, retryCode, scanAgain, videoRef } = useCameraScanner(val => {
     setBarcode(val);
     return lookupBarcode(val);
   });
@@ -70,13 +74,11 @@ export default function IngredientModal({ onSave, onClose, existing }) {
         <div className="modal-title">{existing ? "Edit" : "New"} Ingredient <button className="icon-btn" onClick={onClose}>✕</button></div>
         <label className="lbl">Barcode lookup (optional)</label>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" placeholder="e.g. 850791002000" value={barcode} onChange={e => { setBarcode(e.target.value); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
+          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" inputMode="numeric" placeholder="e.g. 049000042566" value={barcode} onChange={e => { setBarcode(e.target.value.replace(/\D/g, "")); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
           <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera"><CameraIcon /></button>
           <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode(barcode)} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
         </div>
-        {barcodeStatus === "ok"  && <div style={{ background: "var(--accent-dim)", border: "1px solid rgba(200,241,53,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>Found! Check fields below.</div>}
-        {barcodeStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Not found — enter manually.</div>}
-        {barcodeStatus === "invalid" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Enter the 8–14 digits printed below the barcode.</div>}
+        <BarcodeStatus status={barcodeStatus} />
         <div style={{ height: 1, background: "var(--border)", margin: "4px 0 14px" }} />
         <label className="lbl">Name</label>
         <input className="inp" placeholder="e.g. Chicken Breast" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setSaveError(null); }} />
@@ -104,7 +106,7 @@ export default function IngredientModal({ onSave, onClose, existing }) {
           <button className="btn btn-primary" disabled={!valid} onClick={save}>Save</button>
         </div>
       </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} />}
+      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} onRetry={retryCode} onScanAgain={scanAgain} />}
     </div>
   );
 }

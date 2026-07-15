@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { calcIngredientMacros, calcMealMacros, round1, scaleMacros, sumMacros, uid } from "../../utils";
 import { DEFAULT_INGS } from "../../data/defaults";
-import lookupOFF from "../../services/openFoodFacts";
+import lookupOFF, { barcodesMatch, normalizeBarcode, validateBarcode } from "../../services/openFoodFacts";
 import useCameraScanner from "../../hooks/useCameraScanner";
 import CameraIcon from "../camera/CameraIcon";
 import CameraOverlay from "../camera/CameraOverlay";
+import BarcodeStatus from "../barcode/BarcodeStatus";
 
 export default function LogModal({ onSave, onClose, meals, ingredients, confirmDelete }) {
   const [tab, setTab] = useState("saved");
@@ -46,32 +47,31 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
   };
 
   const lookupLogBarcode = async (value) => {
-    const normalized = String(value || "").replace(/\D/g, "");
-    if (!/^\d{8,14}$/.test(normalized)) {
-      setScanStatus("invalid");
-      return false;
-    }
+    const validation = validateBarcode(value);
+    const normalized = normalizeBarcode(value);
     setBarcode(normalized);
+    if (!validation.ok) {
+      setScanStatus(validation.reason);
+      return validation;
+    }
     setScanStatus("loading");
-    const savedIngredient = ingredients.find(ingredient => ingredient.barcode === normalized);
+    const savedIngredient = ingredients.find(ingredient => barcodesMatch(ingredient.barcode, normalized));
     if (savedIngredient) {
-      setScanStatus(null);
+      setScanStatus("ok");
       setAddAmt(String(savedIngredient.servingSize || 100));
       setAddingItem(savedIngredient);
-      return true;
+      return { ok: true, reason: "ok" };
     }
-    const found = await lookupOFF(normalized);
-    if (found) {
-      setScanStatus(null);
-      setAddAmt(String(found.servingSize || 100));
-      setAddingItem({ name: found.name, p100: found.p100, servingSize: found.servingSize });
-      return true;
+    const result = await lookupOFF(normalized);
+    setScanStatus(result.reason);
+    if (result.ok) {
+      setAddAmt(String(result.servingSize || 100));
+      setAddingItem({ name: result.name, p100: result.p100, servingSize: result.servingSize, barcode: result.code });
     }
-    setScanStatus("err");
-    return false;
+    return result;
   };
 
-  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, videoRef } = useCameraScanner(lookupLogBarcode);
+  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, retryCode, scanAgain, videoRef } = useCameraScanner(lookupLogBarcode);
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -147,12 +147,10 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
               <button className="btn btn-ghost btn-sm" onClick={() => setShowManualLog(true)}>Manual</button>
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input className="inp" style={{ margin: 0, flex: 1 }} inputMode="numeric" placeholder="Enter barcode (8–14 digits)" value={barcode} onChange={e => { setBarcode(e.target.value); setScanStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupLogBarcode(barcode)} />
+              <input className="inp" style={{ margin: 0, flex: 1 }} inputMode="numeric" placeholder="Enter UPC/EAN barcode" value={barcode} onChange={e => { setBarcode(e.target.value.replace(/\D/g, "")); setScanStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupLogBarcode(barcode)} />
               <button className="btn btn-primary btn-sm" onClick={() => lookupLogBarcode(barcode)} disabled={scanStatus === "loading"}>{scanStatus === "loading" ? "…" : "Lookup"}</button>
             </div>
-            {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
-            {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
-            {scanStatus === "invalid" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Enter the 8–14 digits printed below the barcode.</div>}
+            <BarcodeStatus status={scanStatus} />
             {ingSearch && (<div className="ing-list">
               {libFiltered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
               {libFiltered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingItem(i); setAddAmt(String(i.servingSize || 100)); setIngSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
@@ -198,7 +196,7 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
           </div>
         </>)}
       </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} />}
+      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} onRetry={retryCode} onScanAgain={scanAgain} />}
     </div>
   );
 }

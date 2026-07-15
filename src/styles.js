@@ -72,12 +72,21 @@ const STYLES = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@
 .scan-frame{position:absolute;left:9%;right:9%;top:50%;height:38%;transform:translateY(-50%);border:2px solid rgba(255,255,255,.62);border-radius:12px;box-shadow:0 0 0 999px rgba(0,0,0,.3);transition:border-color .18s,box-shadow .18s}
 .scan-frame.detected{border-color:#facc15;box-shadow:0 0 0 999px rgba(0,0,0,.25),0 0 28px rgba(250,204,21,.35)}
 .scan-frame.captured,.scan-frame.success{border-color:var(--accent);box-shadow:0 0 0 999px rgba(0,0,0,.25),0 0 30px var(--accent-glow)}
+.scan-frame.rejected{border-color:var(--danger);box-shadow:0 0 0 999px rgba(0,0,0,.35),0 0 28px rgba(255,107,107,.28)}
 .scan-line{position:absolute;left:8%;right:8%;top:50%;height:2px;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:scanMove 1.6s ease-in-out infinite}
 @keyframes scanMove{0%,100%{transform:translateY(-55px);opacity:.45}50%{transform:translateY(55px);opacity:1}}
 .camera-message{min-height:46px;padding:13px 14px 2px;color:rgba(255,255,255,.72);font-size:13px;font-family:'Syne',sans-serif;text-align:center;line-height:1.5}
 .camera-message.detected{color:#facc15}.camera-message.captured{color:var(--accent)}
 .camera-error{color:var(--danger)}
 .camera-code{margin-top:4px;font-family:'Space Mono',monospace;color:#fff}
+.camera-correction{padding:8px 14px 4px}
+.camera-correction-row{display:flex;gap:8px;align-items:center}
+.camera-correction-row .inp{margin:0;flex:1;font-family:'Space Mono',monospace}
+.camera-scan-again{display:block;width:100%;margin-top:8px}
+.barcode-status{border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;line-height:1.45}
+.barcode-status.loading{background:var(--card);border:1px solid var(--border);color:var(--muted);text-align:center}
+.barcode-status.success{background:var(--accent-dim);border:1px solid rgba(200,241,53,.3);color:var(--accent)}
+.barcode-status.error{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--danger)}
 .form-alert{background:var(--accent-dim);border:1px solid rgba(200,241,53,.32);border-radius:9px;padding:10px 12px;margin:10px 0 2px;font-size:12px;color:var(--text);line-height:1.45}
 .toggle-group{display:flex;background:var(--card);border-radius:9px;padding:3px;margin-bottom:14px}
 .toggle{flex:1;padding:8px;border:none;background:none;border-radius:7px;font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;transition:all 0.18s}

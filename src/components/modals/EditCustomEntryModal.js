@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { calcIngredientMacros, round1, sumMacros, uid } from "../../utils";
-import lookupOFF from "../../services/openFoodFacts";
+import lookupOFF, { barcodesMatch, normalizeBarcode } from "../../services/openFoodFacts";
 import useCameraScanner from "../../hooks/useCameraScanner";
 import CameraIcon from "../camera/CameraIcon";
 import CameraOverlay from "../camera/CameraOverlay";
+import BarcodeStatus from "../barcode/BarcodeStatus";
 
 export default function EditCustomEntryModal({ entry, ingredients, onSave, onClose, confirmDelete }) {
   const [editItems, setEditItems] = useState(entry.ingredients || []);
@@ -33,25 +34,23 @@ export default function EditCustomEntryModal({ entry, ingredients, onSave, onClo
     setManualForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
     setShowManual(false);
   };
-  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
+  const { cameraOpen, cameraError, cameraState, capturedCode, openCamera, closeCamera, retryCode, scanAgain, videoRef } = useCameraScanner(async (val) => {
     setScanStatus("loading");
-    const normalized = String(val || "").replace(/\D/g, "");
-    const savedIngredient = ingredients.find(ingredient => ingredient.barcode === normalized);
+    const normalized = normalizeBarcode(val);
+    const savedIngredient = ingredients.find(ingredient => barcodesMatch(ingredient.barcode, normalized));
     if (savedIngredient) {
-      setScanStatus(null);
+      setScanStatus("ok");
       setAddAmt(String(savedIngredient.servingSize || 100));
       setAddingItem(savedIngredient);
-      return true;
+      return { ok: true, reason: "ok" };
     }
-    const found = await lookupOFF(val);
-    if (found) {
-      setScanStatus(null);
-      setAddAmt(String(found.servingSize || 100));
-      setAddingItem({ name: found.name, p100: found.p100 });
-      return true;
+    const result = await lookupOFF(normalized);
+    setScanStatus(result.reason);
+    if (result.ok) {
+      setAddAmt(String(result.servingSize || 100));
+      setAddingItem({ name: result.name, p100: result.p100, barcode: result.code });
     }
-    setScanStatus("err");
-    return false;
+    return result;
   });
 
   return (
@@ -116,8 +115,7 @@ export default function EditCustomEntryModal({ entry, ingredients, onSave, onClo
             <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
             <button className="btn btn-ghost btn-sm" onClick={() => setShowManual(true)}>Manual</button>
           </div>
-          {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
-          {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
+          <BarcodeStatus status={scanStatus} />
           {ingSearch && (<div className="ing-list">
             {libFiltered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
             {libFiltered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingItem(i); setAddAmt(String(i.servingSize || 100)); setIngSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
@@ -128,7 +126,7 @@ export default function EditCustomEntryModal({ entry, ingredients, onSave, onClo
           <button className="btn btn-primary" disabled={editItems.length === 0} onClick={() => onSave({ ...entry, name: `Custom · ${editItems.length} ingredient${editItems.length !== 1 ? "s" : ""}`, ...total, ingredients: editItems })}>Save</button>
         </div>
       </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} />}
+      {cameraOpen && <CameraOverlay videoRef={videoRef} error={cameraError} state={cameraState} capturedCode={capturedCode} onClose={closeCamera} onRetry={retryCode} onScanAgain={scanAgain} />}
     </div>
   );
 }

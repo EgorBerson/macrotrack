@@ -6,6 +6,7 @@ import STYLES from "./styles";
 import useAuthSession from "./hooks/useAuthSession";
 import useDeleteConfirmation from "./hooks/useDeleteConfirmation";
 import useMacroData from "./hooks/useMacroData";
+import { barcodesMatch } from "./services/openFoodFacts";
 import AuthScreen from "./components/AuthScreen";
 import DashboardHeader from "./components/DashboardHeader";
 import AddHistoryDayModal from "./components/modals/AddHistoryDayModal";
@@ -142,7 +143,7 @@ export default function App() {
     if (duplicateInState) {
       return { ok: false, message: `“${duplicateInState.name}” is already in your ingredient library.` };
     }
-    const barcodeInState = normalizedBarcode && ingredients.find(item => item.id !== ingredient.id && item.barcode === normalizedBarcode);
+    const barcodeInState = normalizedBarcode && ingredients.find(item => item.id !== ingredient.id && barcodesMatch(item.barcode, normalizedBarcode));
     if (barcodeInState) {
       return { ok: false, message: `Barcode ${normalizedBarcode} is already assigned to “${barcodeInState.name}”.` };
     }
@@ -159,7 +160,7 @@ export default function App() {
     if (duplicateInDatabase) {
       return { ok: false, message: `“${duplicateInDatabase.data.name}” already exists in the database.` };
     }
-    const barcodeInDatabase = normalizedBarcode && databaseIngredients?.find(row => row.id !== ingredient.id && row.data?.barcode === normalizedBarcode);
+    const barcodeInDatabase = normalizedBarcode && databaseIngredients?.find(row => row.id !== ingredient.id && barcodesMatch(row.data?.barcode, normalizedBarcode));
     if (barcodeInDatabase) {
       return { ok: false, message: `Barcode ${normalizedBarcode} is already assigned to “${barcodeInDatabase.data.name}”.` };
     }
