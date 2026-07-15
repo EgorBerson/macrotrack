@@ -64,7 +64,7 @@ export default function useCameraScanner(onScan) {
       setCameraState("captured");
       Promise.resolve(onScanRef.current(code)).then(result => {
         if (!active) return;
-        const accepted = result === true || result?.ok === true;
+        const accepted = result === true || result?.ok === true || result?.partial === true;
         if (!accepted) {
           setCameraState("rejected");
           setCameraError(result?.message || "This barcode could not be looked up. Check the number and try again.");

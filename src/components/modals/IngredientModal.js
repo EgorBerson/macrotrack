@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { round1, uid } from "../../utils";
-import lookupOFF, { normalizeBarcode, validateBarcode } from "../../services/openFoodFacts";
+import lookupOFF, { normalizeBarcode, productToEditableForm, validateBarcode } from "../../services/openFoodFacts";
 import useCameraScanner from "../../hooks/useCameraScanner";
 import CameraIcon from "../camera/CameraIcon";
 import CameraOverlay from "../camera/CameraOverlay";
@@ -12,12 +12,18 @@ export default function IngredientModal({ onSave, onClose, existing }) {
     : { name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const [barcode, setBarcode] = useState(existing?.barcode || "");
   const [barcodeStatus, setBarcodeStatus] = useState(null);
+  const [barcodeMissingFields, setBarcodeMissingFields] = useState([]);
+  const [reportedCalories, setReportedCalories] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
   const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
   const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
   const factor = 100 / amt;
-  const valid = form.name && (pro || carb || fat);
+  const completeNumber = value => value !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
+  const macrosComplete = [form.protein, form.carbs, form.fat].every(completeNumber);
+  const valid = Boolean(form.name.trim()) && Number(form.amount) > 0 && macrosComplete;
+  const remainingMissingFields = barcodeMissingFields.filter(field => field === "name" ? !form.name.trim() : !completeNumber(form[field]));
+  const displayedBarcodeStatus = barcodeStatus === "incomplete_data" && remainingMissingFields.length === 0 ? "ok" : barcodeStatus;
 
   const save = async () => {
     if (!valid) return;
@@ -49,16 +55,10 @@ export default function IngredientModal({ onSave, onClose, existing }) {
     setBarcodeStatus("loading");
     const result = await lookupOFF(normalizedCode);
     setBarcodeStatus(result.reason);
-    if (result.ok) {
-      const servingSize = result.servingSize || 100;
-      const servingRatio = servingSize / 100;
-      setForm({
-        name: result.name,
-        amount: String(servingSize),
-        protein: round1(result.p100.protein * servingRatio),
-        carbs: round1(result.p100.carbs * servingRatio),
-        fat: round1(result.p100.fat * servingRatio),
-      });
+    setBarcodeMissingFields(result.missingFields || []);
+    setReportedCalories(result.partial ? result.p100?.cal ?? null : null);
+    if (result.ok || result.partial) {
+      setForm(productToEditableForm(result));
     }
     return result;
   };
@@ -74,23 +74,23 @@ export default function IngredientModal({ onSave, onClose, existing }) {
         <div className="modal-title">{existing ? "Edit" : "New"} Ingredient <button className="icon-btn" onClick={onClose}>✕</button></div>
         <label className="lbl">Barcode lookup (optional)</label>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" inputMode="numeric" placeholder="e.g. 049000042566" value={barcode} onChange={e => { setBarcode(e.target.value.replace(/\D/g, "")); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
+          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" inputMode="numeric" placeholder="e.g. 049000042566" value={barcode} onChange={e => { setBarcode(e.target.value.replace(/\D/g, "")); setBarcodeStatus(null); setBarcodeMissingFields([]); setReportedCalories(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
           <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera"><CameraIcon /></button>
           <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode(barcode)} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
         </div>
-        <BarcodeStatus status={barcodeStatus} />
+        <BarcodeStatus status={displayedBarcodeStatus} missingFields={remainingMissingFields} reportedCalories={reportedCalories} barcode={barcode} />
         <div style={{ height: 1, background: "var(--border)", margin: "4px 0 14px" }} />
         <label className="lbl">Name</label>
-        <input className="inp" placeholder="e.g. Chicken Breast" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setSaveError(null); }} />
+        <input className={`inp ${remainingMissingFields.includes("name") ? "incomplete-field" : ""}`} placeholder="e.g. Chicken Breast" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); setSaveError(null); }} />
         {saveError && <div role="alert" style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)", lineHeight: 1.4 }}>{saveError}</div>}
         <label className="lbl">Amount (g)</label>
         <input className="inp" type="number" placeholder="100" value={form.amount} onChange={set("amount")} />
         <label className="lbl">Macros for {amt}g</label>
         <div className="grid2">
-          <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="31" value={form.protein} onChange={set("protein")} /></div>
-          <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={form.carbs} onChange={set("carbs")} /></div>
-          <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="3.6" value={form.fat} onChange={set("fat")} /></div>
-          <div><label className="lbl">Calories (auto)</label><input className="inp" value={calcCal ? calcCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
+          <div><label className="lbl">Protein (g)</label><input className={`inp ${remainingMissingFields.includes("protein") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="31" value={form.protein} onChange={set("protein")} /></div>
+          <div><label className="lbl">Carbs (g)</label><input className={`inp ${remainingMissingFields.includes("carbs") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="0" value={form.carbs} onChange={set("carbs")} /></div>
+          <div><label className="lbl">Fat (g)</label><input className={`inp ${remainingMissingFields.includes("fat") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="3.6" value={form.fat} onChange={set("fat")} /></div>
+          <div><label className="lbl">Calories (auto)</label><input className="inp" value={macrosComplete ? calcCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
         </div>
         {amt !== 100 && calcCal > 0 && (
           <div className="preview">

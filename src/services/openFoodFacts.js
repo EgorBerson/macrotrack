@@ -9,7 +9,7 @@ export const BARCODE_MESSAGES = {
   rate_limited: "Open Food Facts is receiving too many requests. Wait a minute and try again.",
   network_error: "Could not reach the product database. Check your connection and try again.",
   service_error: "The product database is temporarily unavailable. Please try again later.",
-  incomplete_data: "The product exists, but its nutrition information is incomplete. Enter the values from the label manually.",
+  incomplete_data: "Product found, but some information is missing. Available values are filled in below — complete the empty fields manually, then save.",
 };
 
 export function normalizeBarcode(value) {
@@ -56,18 +56,20 @@ function parseProduct(json, requestedCode) {
   if (!product) return failed("not_found", requestedCode);
 
   const nutrients = product.nutriments || {};
-  const macroKeys = ["proteins_100g", "carbohydrates_100g", "fat_100g"];
-  if (!macroKeys.some(key => Object.prototype.hasOwnProperty.call(nutrients, key))) {
-    return failed("incomplete_data", requestedCode);
-  }
-
-  const protein = round1(nutrients.proteins_100g);
-  const carbs = round1(nutrients.carbohydrates_100g);
-  const fat = round1(nutrients.fat_100g);
+  const nutrientValue = key => {
+    if (!Object.prototype.hasOwnProperty.call(nutrients, key)) return null;
+    const value = Number(nutrients[key]);
+    return Number.isFinite(value) ? round1(value) : null;
+  };
+  const protein = nutrientValue("proteins_100g");
+  const carbs = nutrientValue("carbohydrates_100g");
+  const fat = nutrientValue("fat_100g");
   const reportedCalories = Number(nutrients["energy-kcal_100g"]);
   const calories = Number.isFinite(reportedCalories)
     ? Math.round(reportedCalories)
-    : Math.round(protein * 4 + carbs * 4 + fat * 9);
+    : [protein, carbs, fat].every(value => value !== null)
+      ? Math.round(protein * 4 + carbs * 4 + fat * 9)
+      : null;
 
   let servingSize = Number(product.serving_quantity);
   if (!Number.isFinite(servingSize) || servingSize <= 0) {
@@ -76,15 +78,36 @@ function parseProduct(json, requestedCode) {
   }
   servingSize = Math.round(servingSize) || 100;
 
-  const name = product.product_name || product.product_name_en || product.brands || "Scanned product";
+  const name = product.product_name || product.product_name_en || product.brands || "";
+  const missingFields = [];
+  if (!name) missingFields.push("name");
+  if (protein === null) missingFields.push("protein");
+  if (carbs === null) missingFields.push("carbs");
+  if (fat === null) missingFields.push("fat");
+  const partial = missingFields.length > 0;
   return {
-    ok: true,
-    reason: "ok",
-    message: BARCODE_MESSAGES.ok,
+    ok: !partial,
+    partial,
+    reason: partial ? "incomplete_data" : "ok",
+    message: BARCODE_MESSAGES[partial ? "incomplete_data" : "ok"],
     code: normalizeBarcode(product.code || requestedCode),
     name,
     p100: { cal: calories, protein, carbs, fat },
     servingSize,
+    missingFields,
+  };
+}
+
+export function productToEditableForm(product) {
+  const servingSize = product?.servingSize || 100;
+  const ratio = servingSize / 100;
+  const servingValue = value => value === null || value === undefined ? "" : String(round1(value * ratio));
+  return {
+    name: product?.name || "",
+    amount: String(servingSize),
+    protein: servingValue(product?.p100?.protein),
+    carbs: servingValue(product?.p100?.carbs),
+    fat: servingValue(product?.p100?.fat),
   };
 }
 

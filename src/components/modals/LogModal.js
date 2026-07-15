@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { calcIngredientMacros, calcMealMacros, round1, scaleMacros, sumMacros, uid } from "../../utils";
 import { DEFAULT_INGS } from "../../data/defaults";
-import lookupOFF, { barcodesMatch, normalizeBarcode, validateBarcode } from "../../services/openFoodFacts";
+import lookupOFF, { barcodesMatch, normalizeBarcode, productToEditableForm, validateBarcode } from "../../services/openFoodFacts";
 import useCameraScanner from "../../hooks/useCameraScanner";
 import CameraIcon from "../camera/CameraIcon";
 import CameraOverlay from "../camera/CameraOverlay";
@@ -18,19 +18,28 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
   const [addAmt, setAddAmt] = useState("100");
   const [barcode, setBarcode] = useState("");
   const [scanStatus, setScanStatus] = useState(null);
+  const [barcodeMissingFields, setBarcodeMissingFields] = useState([]);
+  const [reportedCalories, setReportedCalories] = useState(null);
   const [showManualLog, setShowManualLog] = useState(false);
   const [manualLogForm, setManualLogForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
   const setQ = k => e => setQuick(f => ({ ...f, [k]: e.target.value }));
   const setMLF = k => e => setManualLogForm(f => ({ ...f, [k]: e.target.value }));
+  const completeNumber = value => value !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
+  const manualLogMacrosComplete = [manualLogForm.protein, manualLogForm.carbs, manualLogForm.fat].every(completeNumber);
+  const manualLogComplete = Boolean(manualLogForm.name.trim()) && Number(manualLogForm.amount) > 0 && manualLogMacrosComplete;
+  const remainingMissingFields = barcodeMissingFields.filter(field => field === "name" ? !manualLogForm.name.trim() : !completeNumber(manualLogForm[field]));
   const manualLogCal = Math.round((+manualLogForm.protein || 0) * 4 + (+manualLogForm.carbs || 0) * 4 + (+manualLogForm.fat || 0) * 9);
   const confirmManualLog = () => {
-    if (!manualLogForm.name) return;
+    if (!manualLogComplete) return;
     const amt = +manualLogForm.amount || 100;
     const pro = +manualLogForm.protein || 0, carb = +manualLogForm.carbs || 0, fat = +manualLogForm.fat || 0;
     const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
     const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
-    setLogItems(prev => [...prev, { id: uid(), name: manualLogForm.name, amount: amt, p100 }]);
+    setLogItems(prev => [...prev, { id: uid(), name: manualLogForm.name, amount: amt, p100, barcode: scanStatus === "incomplete_data" ? normalizeBarcode(barcode) : null }]);
     setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
+    setBarcodeMissingFields([]);
+    setReportedCalories(null);
+    setScanStatus(null);
     setShowManualLog(false);
   };
   const macroIngredients = [...ingredients, ...DEFAULT_INGS.filter(fallback => !ingredients.some(item => item.id === fallback.id))];
@@ -64,9 +73,14 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
     }
     const result = await lookupOFF(normalized);
     setScanStatus(result.reason);
+    setBarcodeMissingFields(result.missingFields || []);
+    setReportedCalories(result.partial ? result.p100?.cal ?? null : null);
     if (result.ok) {
       setAddAmt(String(result.servingSize || 100));
       setAddingItem({ name: result.name, p100: result.p100, servingSize: result.servingSize, barcode: result.code });
+    } else if (result.partial) {
+      setManualLogForm(productToEditableForm(result));
+      setShowManualLog(true);
     }
     return result;
   };
@@ -126,18 +140,19 @@ export default function LogModal({ onSave, onClose, meals, ingredients, confirmD
           ) : showManualLog ? (
             <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
               <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
+              <BarcodeStatus status={scanStatus} missingFields={remainingMissingFields} reportedCalories={reportedCalories} barcode={barcode} />
               <label className="lbl">Name</label>
-              <input className="inp" placeholder="Ingredient name" value={manualLogForm.name} onChange={setMLF("name")} autoFocus />
+              <input className={`inp ${remainingMissingFields.includes("name") ? "incomplete-field" : ""}`} placeholder="Ingredient name" value={manualLogForm.name} onChange={setMLF("name")} autoFocus />
               <div className="grid2">
                 <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualLogForm.amount} onChange={setMLF("amount")} /></div>
-                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualLogCal ? manualLogCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
-                <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.protein} onChange={setMLF("protein")} /></div>
-                <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.carbs} onChange={setMLF("carbs")} /></div>
-                <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.fat} onChange={setMLF("fat")} /></div>
+                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualLogMacrosComplete ? manualLogCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
+                <div><label className="lbl">Protein (g)</label><input className={`inp ${remainingMissingFields.includes("protein") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="0" value={manualLogForm.protein} onChange={setMLF("protein")} /></div>
+                <div><label className="lbl">Carbs (g)</label><input className={`inp ${remainingMissingFields.includes("carbs") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="0" value={manualLogForm.carbs} onChange={setMLF("carbs")} /></div>
+                <div><label className="lbl">Fat (g)</label><input className={`inp ${remainingMissingFields.includes("fat") ? "incomplete-field" : ""}`} type="number" min="0" placeholder="0" value={manualLogForm.fat} onChange={setMLF("fat")} /></div>
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualLog(false); setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
-                <button className="btn btn-primary btn-sm" disabled={!manualLogForm.name} onClick={confirmManualLog}>Add</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualLog(false); setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); setBarcodeMissingFields([]); setReportedCalories(null); setScanStatus(null); }}>Cancel</button>
+                <button className="btn btn-primary btn-sm" disabled={!manualLogComplete} onClick={confirmManualLog}>Add</button>
               </div>
             </div>
           ) : (<>

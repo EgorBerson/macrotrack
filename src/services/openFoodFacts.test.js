@@ -1,4 +1,4 @@
-import lookupOFF, { barcodesMatch, canonicalBarcode, normalizeBarcode, validateBarcode } from "./openFoodFacts";
+import lookupOFF, { barcodesMatch, canonicalBarcode, normalizeBarcode, productToEditableForm, validateBarcode } from "./openFoodFacts";
 
 describe("barcode helpers", () => {
   test.each(["036632024268", "049000042566", "4006381333931", "96385074"])("accepts valid UPC/EAN %s", code => {
@@ -61,12 +61,33 @@ describe("Open Food Facts lookup results", () => {
     await expect(lookupOFF("049000042566")).resolves.toEqual(expect.objectContaining({ ok: false, reason }));
   });
 
-  test("reports incomplete nutrition separately", async () => {
+  test("preserves available values in an incomplete product", async () => {
     jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ status: "success", product: { product_name: "Unknown nutrition", nutriments: {} } }),
+      json: async () => ({
+        status: "success",
+        product: {
+          product_name: "Partial product",
+          serving_quantity: 50,
+          nutriments: { proteins_100g: 10, carbohydrates_100g: 20, "energy-kcal_100g": 150 },
+        },
+      }),
     });
-    await expect(lookupOFF("049000042566")).resolves.toEqual(expect.objectContaining({ ok: false, reason: "incomplete_data" }));
+    const result = await lookupOFF("049000042566");
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      partial: true,
+      reason: "incomplete_data",
+      missingFields: ["fat"],
+      p100: { cal: 150, protein: 10, carbs: 20, fat: null },
+    }));
+    expect(productToEditableForm(result)).toEqual({
+      name: "Partial product",
+      amount: "50",
+      protein: "5",
+      carbs: "10",
+      fat: "",
+    });
   });
 });

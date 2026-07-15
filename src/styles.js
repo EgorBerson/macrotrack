@@ -86,7 +86,10 @@ const STYLES = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@
 .barcode-status{border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;line-height:1.45}
 .barcode-status.loading{background:var(--card);border:1px solid var(--border);color:var(--muted);text-align:center}
 .barcode-status.success{background:var(--accent-dim);border:1px solid rgba(200,241,53,.3);color:var(--accent)}
+.barcode-status.warning{background:rgba(250,204,21,.08);border:1px solid rgba(250,204,21,.38);color:#facc15}
 .barcode-status.error{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--danger)}
+.barcode-missing,.barcode-available{margin-top:4px;color:var(--text);font-family:'Space Mono',monospace;font-size:10px}
+.inp.incomplete-field{border-color:#facc15;background:rgba(250,204,21,.06)}
 .form-alert{background:var(--accent-dim);border:1px solid rgba(200,241,53,.32);border-radius:9px;padding:10px 12px;margin:10px 0 2px;font-size:12px;color:var(--text);line-height:1.45}
 .toggle-group{display:flex;background:var(--card);border-radius:9px;padding:3px;margin-bottom:14px}
 .toggle{flex:1;padding:8px;border:none;background:none;border-radius:7px;font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;transition:all 0.18s}
