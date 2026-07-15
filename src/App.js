@@ -1,790 +1,30 @@
-import { useState, useEffect, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { BrowserMultiFormatReader } from "@zxing/library";
+import { useCallback, useState } from "react";
+import { supabase } from "./supabase";
+import { calcLoggedMacros, findDuplicateMeal, getHistoryDays, normalizeIngredientName, sumMacros, todayStr, validateNewHistoryDay } from "./utils";
+import { DEFAULT_INGS } from "./data/defaults";
+import STYLES from "./styles";
+import useAuthSession from "./hooks/useAuthSession";
+import useDeleteConfirmation from "./hooks/useDeleteConfirmation";
+import useMacroData from "./hooks/useMacroData";
+import AuthScreen from "./components/AuthScreen";
+import DashboardHeader from "./components/DashboardHeader";
+import AddHistoryDayModal from "./components/modals/AddHistoryDayModal";
+import ConfirmDeleteModal from "./components/modals/ConfirmDeleteModal";
+import EditCustomEntryModal from "./components/modals/EditCustomEntryModal";
+import EditQuickEntryModal from "./components/modals/EditQuickEntryModal";
+import EditServingModal from "./components/modals/EditServingModal";
+import IngredientModal from "./components/modals/IngredientModal";
+import LogModal from "./components/modals/LogModal";
+import MealModal from "./components/modals/MealModal";
+import TargetsModal from "./components/modals/TargetsModal";
+import HistoryScreen from "./components/screens/HistoryScreen";
+import IngredientsScreen from "./components/screens/IngredientsScreen";
+import MealsScreen from "./components/screens/MealsScreen";
+import TodayScreen from "./components/screens/TodayScreen";
 
-const SUPABASE_URL = "https://srhtsnoufelxirqaxoqh.supabase.co";
-const SUPABASE_KEY = "sb_publishable_UYwe1Vi2ce2XVcqFMqGcDA_dDo84Exh";
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-const STYLES = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap');
-*{box-sizing:border-box;margin:0;padding:0} html,body{height:100%;overflow:hidden}
-:root{--bg:#080c0a;--surface:#0f1410;--card:#161c17;--border:#232d24;--accent:#c8f135;--accent-dim:rgba(200,241,53,0.1);--accent-glow:rgba(200,241,53,0.25);--text:#e8f0e9;--muted:#4a5e4b;--protein:#4ade80;--carbs:#60a5fa;--fat:#fb923c;--danger:#ff6b6b}
-.app{background:var(--bg);height:100vh;display:flex;flex-direction:column;font-family:'Syne',sans-serif;color:var(--text);max-width:480px;margin:0 auto;overflow:hidden}
-.header{padding:18px 16px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
-.logo{font-size:19px;font-weight:800;letter-spacing:-0.5px} .logo span{color:var(--accent)}
-.icon-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;padding:4px;line-height:1;transition:color 0.2s} .icon-btn:hover{color:var(--text)}
-.summary{margin:12px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px}
-.cal-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px}
-.cal-num{font-family:'Space Mono',monospace;font-size:44px;font-weight:700;color:var(--accent);line-height:1}
-.cal-sub{font-size:13px;color:var(--muted)} .cal-target{font-family:'Space Mono',monospace;font-size:13px;color:var(--muted)}
-.macro-bars{display:flex;flex-direction:column;gap:9px}
-.mbar-row{display:flex;align-items:center;gap:10px}
-.mbar-label{font-size:10px;color:var(--muted);width:46px;text-transform:uppercase;letter-spacing:0.7px}
-.mbar-bg{flex:1;height:5px;background:#2a3a2b;border-radius:3px;overflow:hidden}
-.mbar-fill{height:100%;border-radius:3px;transition:width 0.4s ease}
-.mbar-val{font-family:'Space Mono',monospace;font-size:10px;color:var(--text);width:70px;text-align:right}
-.deficit{display:flex;justify-content:space-between;margin-top:13px;padding-top:13px;border-top:1px solid var(--border);font-family:'Space Mono',monospace;font-size:11px}
-.tabs{display:flex;padding:0 12px;border-bottom:1px solid var(--border)}
-.tab{flex:1;padding:11px 4px;border:none;background:none;color:var(--muted);font-family:'Syne',sans-serif;font-size:12px;font-weight:700;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;letter-spacing:0.3px}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.content{padding:12px;padding-bottom:90px;flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;margin-top:6px}
-.sec-title{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
-.log-entry{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:11px 14px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between}
-.entry-name{font-size:14px;font-weight:700;margin-bottom:2px} .entry-macros{font-size:10px;color:var(--muted);font-family:'Space Mono',monospace}
-.entry-cal{font-family:'Space Mono',monospace;font-size:17px;font-weight:700;color:var(--accent)}
-.meal-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:7px;cursor:pointer;transition:border-color 0.2s,background 0.2s;display:flex;align-items:center;justify-content:space-between}
-.meal-card:hover{border-color:var(--accent);background:var(--card)}
-.meal-card-name{font-size:15px;font-weight:700;margin-bottom:4px} .meal-card-macros{font-size:10px;color:var(--muted);font-family:'Space Mono',monospace}
-.meal-card-cal{font-family:'Space Mono',monospace;font-size:18px;font-weight:700;color:var(--accent);white-space:nowrap}
-.fab{position:fixed;bottom:22px;right:20px;width:54px;height:54px;border-radius:50%;background:var(--accent);color:#000;border:none;font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 24px var(--accent-glow);font-weight:700;transition:transform 0.2s;z-index:100;line-height:1}
-.fab:hover{transform:scale(1.06)}
-.btn{padding:11px 20px;border-radius:9px;border:none;font-family:'Syne',sans-serif;font-size:14px;font-weight:700;cursor:pointer;transition:all 0.2s}
-.btn-primary{background:var(--accent);color:#000} .btn-primary:hover{opacity:0.88} .btn-primary:disabled{opacity:0.4;cursor:not-allowed}
-.btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)} .btn-ghost:hover{border-color:var(--text);color:var(--text)}
-.btn-sm{padding:6px 14px;font-size:12px;border-radius:7px}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(5px);z-index:200;display:flex;align-items:flex-end;padding:12px}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:20px;width:100%;max-height:88vh;overflow-y:auto;animation:up 0.22s ease}
-@keyframes up{from{transform:translateY(36px);opacity:0}to{transform:translateY(0);opacity:1}}
-.modal-title{font-size:17px;font-weight:800;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
-.lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:5px;display:block}
-.inp{width:100%;background:var(--card);border:1px solid var(--border);border-radius:9px;padding:10px 13px;color:var(--text);font-family:'Syne',sans-serif;font-size:16px;outline:none;transition:border-color 0.2s;margin-bottom:12px}
-.inp:focus{border-color:var(--accent)} .inp::placeholder{color:var(--muted)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.modal-actions{display:flex;gap:8px;margin-top:16px} .modal-actions .btn{flex:1}
-.empty{text-align:center;padding:44px 20px;color:var(--muted)} .empty-icon{font-size:34px;margin-bottom:10px} .empty-text{font-size:13px;line-height:1.5}
-.toggle-group{display:flex;background:var(--card);border-radius:9px;padding:3px;margin-bottom:14px}
-.toggle{flex:1;padding:8px;border:none;background:none;border-radius:7px;font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;transition:all 0.18s}
-.toggle.active{background:var(--surface);color:var(--text)}
-.ing-chip{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;font-size:12px}
-.ing-result{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;transition:background 0.15s;color:var(--text)} .ing-result:hover{background:var(--card)}
-.ing-list{max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;margin-bottom:12px}
-.preview{background:var(--accent-dim);border:1px solid rgba(200,241,53,0.18);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-family:'Space Mono',monospace;font-size:11px;display:flex;justify-content:space-between}
-.del-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:2px 6px;line-height:1;transition:color 0.2s} .del-btn:hover{color:var(--danger)}
-.serving-row{background:var(--card);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
-.serving-inp{width:70px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-family:'Space Mono',monospace;font-size:16px;text-align:right;outline:none}
-.serving-inp:focus{border-color:var(--accent)}
-.tag{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:10px;font-family:'Space Mono',monospace;color:var(--muted);margin-right:5px;margin-bottom:4px}
-.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);padding:8px 18px;border-radius:20px;font-family:'Space Mono',monospace;font-size:11px;font-weight:700;z-index:999;pointer-events:none;animation:toast-in 0.2s ease;white-space:nowrap}
-.toast-ok{background:var(--accent);color:#000} .toast-err{background:var(--danger);color:#fff}
-@keyframes toast-in{from{opacity:0;top:8px}to{opacity:1;top:18px}}
-.auth-wrap{min-height:100vh;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
-.auth-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;width:100%;max-width:380px}
-.auth-title{font-size:22px;font-weight:800;margin-bottom:6px} .auth-sub{font-size:13px;color:var(--muted);margin-bottom:24px}`;
-
-const uid = () => Math.random().toString(36).slice(2, 9);
-const todayStr = () => new Date().toISOString().slice(0, 10);
-const fmtDate = d => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-const round1 = n => Math.round(n * 10) / 10;
-
-const CameraIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-    <circle cx="12" cy="13" r="4"/>
-  </svg>
-);
-
-async function lookupOFF(rawCode) {
-  const code = rawCode.trim();
-  if (!code) return null;
-  const variants = [...new Set([code, "0" + code, code.replace(/^0+/, "")])];
-  for (const c of variants) {
-    try {
-      const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${c}.json`);
-      const json = await res.json();
-      if (json.status === 1) {
-        const n = json.product.nutriments;
-        const protein = round1(n["proteins_100g"] || 0);
-        const carbs = round1(n["carbohydrates_100g"] || 0);
-        const fat = round1(n["fat_100g"] || 0);
-        let servingSize = 100;
-        if (json.product.serving_quantity) {
-          servingSize = Math.round(+json.product.serving_quantity) || 100;
-        } else if (json.product.serving_size) {
-          const m = String(json.product.serving_size).match(/(\d+(\.\d+)?)/);
-          if (m) servingSize = Math.round(+m[1]) || 100;
-        }
-        return { name: json.product.product_name || json.product.product_name_en || "", p100: { cal: Math.round(protein * 4 + carbs * 4 + fat * 9), protein, carbs, fat }, servingSize };
-      }
-    } catch {}
-  }
-  return null;
-}
-
-function useCameraScanner(onScan) {
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const intervalRef = useRef(null);
-  const onScanRef = useRef(onScan);
-  useEffect(() => { onScanRef.current = onScan; });
-
-  const closeCamera = () => {
-    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    setCameraOpen(false);
-  };
-
-  const openCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      streamRef.current = stream;
-      setCameraOpen(true);
-    } catch {
-      alert("Camera access denied");
-    }
-  };
-
-  useEffect(() => {
-    if (!cameraOpen || !videoRef.current || !streamRef.current) return;
-    const video = videoRef.current;
-    video.srcObject = streamRef.current;
-    video.play();
-    const reader = new BrowserMultiFormatReader();
-    intervalRef.current = setInterval(() => {
-      if (!video.videoWidth || !video.videoHeight) return;
-      try {
-        const result = reader.decode(video);
-        const val = result.getText();
-        clearInterval(intervalRef.current); intervalRef.current = null;
-        if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-        setCameraOpen(false);
-        onScanRef.current(val);
-      } catch {}
-    }, 500);
-    return () => {
-      clearInterval(intervalRef.current); intervalRef.current = null;
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    };
-  }, [cameraOpen]); // eslint-disable-line
-
-  useEffect(() => () => closeCamera(), []); // eslint-disable-line
-
-  return { cameraOpen, openCamera, closeCamera, videoRef };
-}
-
-function CameraOverlay({ videoRef, onClose }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 500, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <video ref={videoRef} style={{ width: "100%", maxHeight: "70vh", objectFit: "cover" }} playsInline muted />
-      <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 16, fontFamily: "Syne,sans-serif" }}>Point at barcode · tap to cancel</div>
-    </div>
-  );
-}
-
-const DEFAULT_INGS = [
-  { id: "chkdsh", name: "Honey Chilli Chicken",   p100: { cal: 135.6, protein: 17.7, carbs: 9.2,  fat: 2.6  } },
-  { id: "wrice",  name: "White Rice (cooked)",     p100: { cal: 100,   protein: 1.67, carbs: 22.1, fat: 0.21 } },
-  { id: "bread",  name: "Bread Slice",             p100: { cal: 133.3, protein: 6.7,  carbs: 26.7, fat: 1.7  } },
-  { id: "cheese", name: "Cheese Slice",            p100: { cal: 300,   protein: 26.7, carbs: 0,    fat: 23.3 } },
-  { id: "ham",    name: "Ham Slices",              p100: { cal: 150,   protein: 22.5, carbs: 2.5,  fat: 5    } },
-  { id: "beefmx", name: "Beef Mix (seasoned)",     p100: { cal: 123.3, protein: 18.1, carbs: 4.3,  fat: 4.3  } },
-  { id: "lcpita", name: "Low Carb Pita",           p100: { cal: 111.1, protein: 4.4,  carbs: 22.2, fat: 1.1  } },
-  { id: "hclsau", name: "Honey Chilli Lime Sauce", p100: { cal: 126.7, protein: 3.3,  carbs: 11.7, fat: 7.5  } },
-  { id: "pchips", name: "Protein Chips",           p100: { cal: 437.5, protein: 59.4, carbs: 15.6, fat: 15.6 } },
-  { id: "pbar",   name: "Protein Bar",             p100: { cal: 241.9, protein: 45.2, carbs: 19.4, fat: 3.2  } },
-];
-
-const DEFAULT_MEALS = [
-  { id: "meal1", name: "🍗 Honey Chilli Chicken + Rice", manual: null, ingredients: [{ id: "chkdsh", name: "Honey Chilli Chicken", amount: 390 }, { id: "wrice", name: "White Rice (cooked)", amount: 240 }] },
-  { id: "meal2", name: "🥪 Sandwich",                    manual: null, ingredients: [{ id: "bread", name: "Bread Slice", amount: 60 }, { id: "cheese", name: "Cheese Slice", amount: 15 }, { id: "ham", name: "Ham Slices", amount: 80 }] },
-  { id: "meal3", name: "🌮 Taco Beef Pita",              manual: null, ingredients: [{ id: "beefmx", name: "Beef Mix (seasoned)", amount: 116 }, { id: "cheese", name: "Cheese Slice", amount: 15 }, { id: "lcpita", name: "Low Carb Pita", amount: 45 }, { id: "hclsau", name: "Honey Chilli Lime Sauce", amount: 60 }] },
-  { id: "meal4", name: "🍿 Protein Chips (1 bag)",       manual: null, ingredients: [{ id: "pchips", name: "Protein Chips", amount: 32 }] },
-  { id: "meal5", name: "🍫 Protein Bar",                 manual: null, ingredients: [{ id: "pbar", name: "Protein Bar", amount: 62 }] },
-];
-
-function calcMealMacros(meal, ingredients) {
-  if (meal.manual) return meal.manual;
-  return meal.ingredients.reduce((acc, mi) => {
-    const p100 = mi.p100 || ingredients.find(i => i.id === mi.id)?.p100;
-    if (!p100) return acc;
-    const r = mi.amount / 100;
-    return { cal: acc.cal + Math.round(p100.cal * r), protein: round1(acc.protein + p100.protein * r), carbs: round1(acc.carbs + p100.carbs * r), fat: round1(acc.fat + p100.fat * r) };
-  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
-}
-
-function MacroBar({ label, val, target, color }) {
-  const pct = Math.min((val / Math.max(target, 1)) * 100, 100);
-  return (
-    <div className="mbar-row">
-      <span className="mbar-label">{label}</span>
-      <div className="mbar-bg"><div className="mbar-fill" style={{ width: `${pct}%`, background: val > target ? "var(--danger)" : color }} /></div>
-      <span className="mbar-val">{Math.round(val)}/{target}g</span>
-    </div>
-  );
-}
-
-// ── Auth Screen ───────────────────────────────────────────────
-function AuthScreen({ onAuth }) {
-  const [mode, setMode] = useState("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState(null);
-
-  const handle = async () => {
-    setLoading(true); setMsg(null);
-    const fn = mode === "login" ? supabase.auth.signInWithPassword : supabase.auth.signUp;
-    const { data, error } = await fn.call(supabase.auth, { email, password });
-    setLoading(false);
-    if (error) { setMsg({ err: true, text: error.message }); return; }
-    if (mode === "signup" && !data.session) { setMsg({ err: false, text: "Check your email to confirm your account!" }); return; }
-    onAuth(data.session);
-  };
-
-  return (
-    <div className="auth-wrap">
-      <style>{STYLES}</style>
-      <div className="auth-box">
-        <div className="auth-title">MACRO<span style={{ color: "var(--accent)" }}>TRACK</span></div>
-        <div className="auth-sub">{mode === "login" ? "Sign in to your account" : "Create a new account"}</div>
-        <label className="lbl">Email</label>
-        <input className="inp" type="email" placeholder="you@email.com" value={email} onChange={e => setEmail(e.target.value)} />
-        <label className="lbl">Password</label>
-        <input className="inp" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} />
-        {msg && <div style={{ padding: "8px 12px", borderRadius: 8, marginBottom: 12, fontSize: 12, background: msg.err ? "rgba(255,107,107,0.1)" : "var(--accent-dim)", color: msg.err ? "var(--danger)" : "var(--accent)", border: `1px solid ${msg.err ? "rgba(255,107,107,0.3)" : "rgba(200,241,53,0.3)"}` }}>{msg.text}</div>}
-        <button className="btn btn-primary" style={{ width: "100%", marginBottom: 12 }} onClick={handle} disabled={loading}>{loading ? "…" : mode === "login" ? "Sign In" : "Sign Up"}</button>
-        <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMsg(null); }}>
-          {mode === "login" ? "No account? Sign up" : "Have an account? Sign in"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Ingredient Modal ──────────────────────────────────────────
-function IngredientModal({ onSave, onClose, existing }) {
-  const [form, setForm] = useState(existing
-    ? { name: existing.name, amount: "100", protein: existing.p100.protein, carbs: existing.p100.carbs, fat: existing.p100.fat }
-    : { name: "", amount: "100", protein: "", carbs: "", fat: "" });
-  const [barcode, setBarcode] = useState("");
-  const [barcodeStatus, setBarcodeStatus] = useState(null);
-  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
-  const pro = +form.protein || 0, carb = +form.carbs || 0, fat = +form.fat || 0, amt = +form.amount || 100;
-  const calcCal = Math.round(pro * 4 + carb * 4 + fat * 9);
-  const factor = 100 / amt;
-  const valid = form.name && (pro || carb || fat);
-
-  const lookupBarcode = async (code) => {
-    if (!code?.trim()) return;
-    setBarcodeStatus("loading");
-    const found = await lookupOFF(code);
-    if (found) {
-      setForm({ name: found.name, amount: String(found.servingSize || 100), protein: found.p100.protein, carbs: found.p100.carbs, fat: found.p100.fat });
-      setBarcodeStatus("ok");
-    } else {
-      setBarcodeStatus("err");
-    }
-  };
-
-  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(val => {
-    setBarcode(val);
-    lookupBarcode(val);
-  });
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">{existing ? "Edit" : "New"} Ingredient <button className="icon-btn" onClick={onClose}>✕</button></div>
-        <label className="lbl">Barcode lookup (optional)</label>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input className="inp" style={{ margin: 0, flex: 1 }} type="text" placeholder="e.g. 850791002000" value={barcode} onChange={e => { setBarcode(e.target.value); setBarcodeStatus(null); }} onKeyDown={e => e.key === "Enter" && lookupBarcode(barcode)} />
-          <button className="btn btn-ghost btn-sm" style={{ whiteSpace: "nowrap", padding: "6px 10px" }} onClick={openCamera} title="Scan barcode with camera"><CameraIcon /></button>
-          <button className="btn btn-primary btn-sm" style={{ whiteSpace: "nowrap" }} onClick={() => lookupBarcode(barcode)} disabled={barcodeStatus === "loading"}>{barcodeStatus === "loading" ? "…" : "Lookup"}</button>
-        </div>
-        {barcodeStatus === "ok"  && <div style={{ background: "var(--accent-dim)", border: "1px solid rgba(200,241,53,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>Found! Check fields below.</div>}
-        {barcodeStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Not found — enter manually.</div>}
-        <div style={{ height: 1, background: "var(--border)", margin: "4px 0 14px" }} />
-        <label className="lbl">Name</label>
-        <input className="inp" placeholder="e.g. Chicken Breast" value={form.name} onChange={set("name")} />
-        <label className="lbl">Amount (g)</label>
-        <input className="inp" type="number" placeholder="100" value={form.amount} onChange={set("amount")} />
-        <label className="lbl">Macros for {amt}g</label>
-        <div className="grid2">
-          <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="31" value={form.protein} onChange={set("protein")} /></div>
-          <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={form.carbs} onChange={set("carbs")} /></div>
-          <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="3.6" value={form.fat} onChange={set("fat")} /></div>
-          <div><label className="lbl">Calories (auto)</label><input className="inp" value={calcCal ? calcCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
-        </div>
-        {amt !== 100 && calcCal > 0 && (
-          <div className="preview">
-            <span style={{ color: "var(--muted)" }}>Per 100g →</span>
-            <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{Math.round(calcCal * factor)}</span></span>
-            <span style={{ color: "var(--muted)" }}>P <span style={{ color: "var(--text)" }}>{round1(pro * factor)}g</span></span>
-            <span style={{ color: "var(--muted)" }}>C <span style={{ color: "var(--text)" }}>{round1(carb * factor)}g</span></span>
-            <span style={{ color: "var(--muted)" }}>F <span style={{ color: "var(--text)" }}>{round1(fat * factor)}g</span></span>
-          </div>
-        )}
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!valid} onClick={() => onSave({ id: existing?.id || uid(), name: form.name, servingSize: amt, p100: { cal: Math.round(calcCal * factor), protein: round1(pro * factor), carbs: round1(carb * factor), fat: round1(fat * factor) } })}>Save</button>
-        </div>
-      </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
-    </div>
-  );
-}
-
-// ── Meal Modal ────────────────────────────────────────────────
-function MealModal({ onSave, onClose, allIngredients, existing }) {
-  const [name, setName] = useState(existing?.name || "");
-  const [mode, setMode] = useState(existing?.manual ? "manual" : "ingredients");
-  const [manual, setManual] = useState(existing?.manual || { cal: "", protein: "", carbs: "", fat: "" });
-  const [mealIngs, setMealIngs] = useState(existing?.ingredients || []);
-  const [search, setSearch] = useState("");
-  const [addingIng, setAddingIng] = useState(null);
-  const [addAmt, setAddAmt] = useState("100");
-  const [scanStatus, setScanStatus] = useState(null);
-  const [showManualMeal, setShowManualMeal] = useState(false);
-  const [manualMealForm, setManualMealForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-  const setM = k => e => setManual(f => ({ ...f, [k]: e.target.value }));
-  const setMMF = k => e => setManualMealForm(f => ({ ...f, [k]: e.target.value }));
-  const manualMealCal = Math.round((+manualMealForm.protein || 0) * 4 + (+manualMealForm.carbs || 0) * 4 + (+manualMealForm.fat || 0) * 9);
-  const confirmManualMeal = () => {
-    if (!manualMealForm.name) return;
-    const amt = +manualMealForm.amount || 100;
-    const pro = +manualMealForm.protein || 0, carb = +manualMealForm.carbs || 0, fat = +manualMealForm.fat || 0;
-    const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
-    const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
-    setMealIngs(prev => [...prev, { id: uid(), name: manualMealForm.name, amount: amt, p100 }]);
-    setManualMealForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-    setShowManualMeal(false);
-  };
-  const filtered = allIngredients.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) && !mealIngs.find(m => m.id === i.id));
-  const preview = mode === "manual"
-    ? { cal: +manual.cal || 0, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 }
-    : calcMealMacros({ ingredients: mealIngs }, allIngredients);
-  const confirmAdd = () => {
-    if (!addingIng || !addAmt) return;
-    const entry = { id: addingIng.id, name: addingIng.name, amount: +addAmt };
-    if (addingIng.p100) entry.p100 = addingIng.p100;
-    setMealIngs(p => [...p, entry]);
-    setAddingIng(null); setAddAmt("100"); setSearch("");
-  };
-  const valid = name && (mode === "manual" ? manual.cal : mealIngs.length > 0);
-  const save = () => onSave({ id: existing?.id || uid(), name, ingredients: mode === "ingredients" ? mealIngs : [], manual: mode === "manual" ? { cal: +manual.cal, protein: +manual.protein || 0, carbs: +manual.carbs || 0, fat: +manual.fat || 0 } : null });
-
-  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
-    setScanStatus("loading");
-    const found = await lookupOFF(val);
-    if (found) { setScanStatus(null); setAddAmt(String(found.servingSize || 100)); setAddingIng({ id: uid(), name: found.name, p100: found.p100, servingSize: found.servingSize }); }
-    else setScanStatus("err");
-  });
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">{existing ? "Edit" : "New"} Meal <button className="icon-btn" onClick={onClose}>✕</button></div>
-        <label className="lbl">Meal name</label>
-        <input className="inp" placeholder="e.g. Honey Chilli Chicken" value={name} onChange={e => setName(e.target.value)} />
-        <div className="toggle-group">
-          <button className={`toggle ${mode === "ingredients" ? "active" : ""}`} onClick={() => setMode("ingredients")}>By Ingredients</button>
-          <button className={`toggle ${mode === "manual" ? "active" : ""}`} onClick={() => setMode("manual")}>Manual Macros</button>
-        </div>
-        {mode === "ingredients" && (<>
-          {mealIngs.map(mi => {
-            const p100 = mi.p100 || allIngredients.find(i => i.id === mi.id)?.p100;
-            const r = mi.amount / 100;
-            const sc = p100 ? { cal: Math.round(p100.cal * r), protein: round1(p100.protein * r), carbs: round1(p100.carbs * r), fat: round1(p100.fat * r) } : null;
-            return (
-              <div key={mi.id} className="ing-chip" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontWeight: 700, fontSize: 13 }}>{mi.name}</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--accent)" }}>{mi.amount}g</span>
-                    <button className="del-btn" onClick={() => setMealIngs(p => p.filter(x => x.id !== mi.id))}>✕</button>
-                  </span>
-                </div>
-                {sc && <span style={{ fontFamily: "Space Mono,monospace", fontSize: 10, color: "var(--muted)" }}>{sc.cal} kcal · P {sc.protein}g · C {sc.carbs}g · F {sc.fat}g</span>}
-              </div>
-            );
-          })}
-          {addingIng ? (
-            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{addingIng.name}</div>
-              <label className="lbl">Amount (grams)</label>
-              <input className="inp" type="number" placeholder="100" value={addAmt} onChange={e => setAddAmt(e.target.value)} autoFocus />
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setAddingIng(null); setAddAmt("100"); }}>Cancel</button>
-                <button className="btn btn-primary btn-sm" onClick={confirmAdd}>Add</button>
-              </div>
-            </div>
-          ) : showManualMeal ? (
-            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
-              <label className="lbl">Name</label>
-              <input className="inp" placeholder="Ingredient name" value={manualMealForm.name} onChange={setMMF("name")} autoFocus />
-              <div className="grid2">
-                <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualMealForm.amount} onChange={setMMF("amount")} /></div>
-                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualMealCal ? manualMealCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
-                <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.protein} onChange={setMMF("protein")} /></div>
-                <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.carbs} onChange={setMMF("carbs")} /></div>
-                <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualMealForm.fat} onChange={setMMF("fat")} /></div>
-              </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualMeal(false); setManualMealForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
-                <button className="btn btn-primary btn-sm" disabled={!manualMealForm.name} onClick={confirmManualMeal}>Add</button>
-              </div>
-            </div>
-          ) : (<>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input className="inp" style={{ margin: 0, flex: 1 }} placeholder="Search ingredients…" value={search} onChange={e => { setSearch(e.target.value); setScanStatus(null); }} />
-              <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowManualMeal(true)}>Manual</button>
-            </div>
-            {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
-            {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
-            {search && (<div className="ing-list">
-              {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
-              {filtered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingIng(i); setAddAmt(String(i.servingSize || 100)); setSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
-            </div>)}
-          </>)}
-        </>)}
-        {mode === "manual" && (<div className="grid2">
-          <div><label className="lbl">Calories</label><input className="inp" type="number" placeholder="500" value={manual.cal} onChange={setM("cal")} /></div>
-          <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="40" value={manual.protein} onChange={setM("protein")} /></div>
-          <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="50" value={manual.carbs} onChange={setM("carbs")} /></div>
-          <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="15" value={manual.fat} onChange={setM("fat")} /></div>
-        </div>)}
-        {preview.cal > 0 && (<div className="preview">
-          <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{preview.cal}</span></span>
-          <span style={{ color: "var(--muted)" }}>PRO <span style={{ color: "var(--text)" }}>{round1(preview.protein)}g</span></span>
-          <span style={{ color: "var(--muted)" }}>CARB <span style={{ color: "var(--text)" }}>{round1(preview.carbs)}g</span></span>
-          <span style={{ color: "var(--muted)" }}>FAT <span style={{ color: "var(--text)" }}>{round1(preview.fat)}g</span></span>
-        </div>)}
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!valid} onClick={save}>Save Meal</button>
-        </div>
-      </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
-    </div>
-  );
-}
-
-// ── Log Modal ─────────────────────────────────────────────────
-function LogModal({ onSave, onClose, meals, ingredients }) {
-  const [tab, setTab] = useState("saved");
-  const [selectedMeal, setSelectedMeal] = useState(null);
-  const [servings, setServings] = useState("1");
-  const [quick, setQuick] = useState({ name: "", cal: "", protein: "", carbs: "", fat: "" });
-  const [logItems, setLogItems] = useState([]);
-  const [ingSearch, setIngSearch] = useState("");
-  const [addingItem, setAddingItem] = useState(null);
-  const [addAmt, setAddAmt] = useState("100");
-  const [scanStatus, setScanStatus] = useState(null);
-  const [showManualLog, setShowManualLog] = useState(false);
-  const [manualLogForm, setManualLogForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-  const setQ = k => e => setQuick(f => ({ ...f, [k]: e.target.value }));
-  const setMLF = k => e => setManualLogForm(f => ({ ...f, [k]: e.target.value }));
-  const manualLogCal = Math.round((+manualLogForm.protein || 0) * 4 + (+manualLogForm.carbs || 0) * 4 + (+manualLogForm.fat || 0) * 9);
-  const confirmManualLog = () => {
-    if (!manualLogForm.name) return;
-    const amt = +manualLogForm.amount || 100;
-    const pro = +manualLogForm.protein || 0, carb = +manualLogForm.carbs || 0, fat = +manualLogForm.fat || 0;
-    const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
-    const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
-    setLogItems(prev => [...prev, { id: uid(), name: manualLogForm.name, amount: amt, p100 }]);
-    setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-    setShowManualLog(false);
-  };
-  const mealMacros = selectedMeal ? calcMealMacros(selectedMeal, ingredients) : null;
-  const s = +servings || 1;
-  const scaled = mealMacros ? { cal: Math.round(mealMacros.cal * s), protein: round1(mealMacros.protein * s), carbs: round1(mealMacros.carbs * s), fat: round1(mealMacros.fat * s) } : null;
-  const libFiltered = ingredients.filter(i => i.name.toLowerCase().includes(ingSearch.toLowerCase()));
-  const ingTotal = logItems.reduce((acc, item) => {
-    const r = item.amount / 100;
-    return { cal: acc.cal + Math.round(item.p100.cal * r), protein: round1(acc.protein + item.p100.protein * r), carbs: round1(acc.carbs + item.p100.carbs * r), fat: round1(acc.fat + item.p100.fat * r) };
-  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
-  const confirmLogItem = () => {
-    if (!addingItem || !addAmt) return;
-    setLogItems(p => [...p, { id: uid(), name: addingItem.name, p100: addingItem.p100, amount: +addAmt }]);
-    setAddingItem(null); setAddAmt("100"); setIngSearch("");
-  };
-
-  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
-    setScanStatus("loading");
-    const found = await lookupOFF(val);
-    if (found) { setScanStatus(null); setAddAmt(String(found.servingSize || 100)); setAddingItem({ name: found.name, p100: found.p100, servingSize: found.servingSize }); }
-    else setScanStatus("err");
-  });
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">Log Food <button className="icon-btn" onClick={onClose}>✕</button></div>
-        <div className="toggle-group">
-          <button className={`toggle ${tab === "saved" ? "active" : ""}`} onClick={() => { setTab("saved"); setSelectedMeal(null); }}>Saved Meals</button>
-          <button className={`toggle ${tab === "ingredients" ? "active" : ""}`} onClick={() => setTab("ingredients")}>Ingredients</button>
-          <button className={`toggle ${tab === "quick" ? "active" : ""}`} onClick={() => setTab("quick")}>Quick Add</button>
-        </div>
-        {tab === "saved" && (<>
-          {meals.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="9"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div><div className="empty-text">No saved meals yet.</div></div>}
-          {!selectedMeal && meals.map(m => {
-            const mac = calcMealMacros(m, ingredients);
-            return (<div key={m.id} className="meal-card" onClick={() => setSelectedMeal(m)}>
-              <div><div className="meal-card-name">{m.name}</div><div className="meal-card-macros">P {mac.protein}g · C {mac.carbs}g · F {mac.fat}g</div></div>
-              <div className="meal-card-cal">{mac.cal}</div>
-            </div>);
-          })}
-          {selectedMeal && scaled && (<>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => setSelectedMeal(null)}>← Back</button>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{selectedMeal.name}</span>
-            </div>
-            <div className="serving-row">
-              <span style={{ fontSize: 13 }}>Servings <span style={{ color: "var(--muted)", fontSize: 11 }}>(1 = full meal)</span></span>
-              <input className="serving-inp" type="number" step="0.25" min="0.25" value={servings} onChange={e => setServings(e.target.value)} />
-            </div>
-            <div className="preview">
-              <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{scaled.cal}</span></span>
-              <span style={{ color: "var(--muted)" }}>PRO <span style={{ color: "var(--text)" }}>{scaled.protein}g</span></span>
-              <span style={{ color: "var(--muted)" }}>CARB <span style={{ color: "var(--text)" }}>{scaled.carbs}g</span></span>
-              <span style={{ color: "var(--muted)" }}>FAT <span style={{ color: "var(--text)" }}>{scaled.fat}g</span></span>
-            </div>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => onSave({ id: uid(), name: selectedMeal.name + (servings !== "1" ? ` x${servings}` : ""), ...scaled })}>Log It</button>
-            </div>
-          </>)}
-        </>)}
-        {tab === "ingredients" && (<>
-          {addingItem ? (
-            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{addingItem.name}</div>
-              <label className="lbl">Amount (grams)</label>
-              <input className="inp" type="number" placeholder="100" value={addAmt} onChange={e => setAddAmt(e.target.value)} autoFocus />
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setAddingItem(null); setAddAmt("100"); }}>Cancel</button>
-                <button className="btn btn-primary btn-sm" onClick={confirmLogItem}>Add</button>
-              </div>
-            </div>
-          ) : showManualLog ? (
-            <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
-              <label className="lbl">Name</label>
-              <input className="inp" placeholder="Ingredient name" value={manualLogForm.name} onChange={setMLF("name")} autoFocus />
-              <div className="grid2">
-                <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualLogForm.amount} onChange={setMLF("amount")} /></div>
-                <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualLogCal ? manualLogCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
-                <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.protein} onChange={setMLF("protein")} /></div>
-                <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.carbs} onChange={setMLF("carbs")} /></div>
-                <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualLogForm.fat} onChange={setMLF("fat")} /></div>
-              </div>
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setShowManualLog(false); setManualLogForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
-                <button className="btn btn-primary btn-sm" disabled={!manualLogForm.name} onClick={confirmManualLog}>Add</button>
-              </div>
-            </div>
-          ) : (<>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input className="inp" style={{ margin: 0, flex: 1 }} placeholder="Search ingredients…" value={ingSearch} onChange={e => { setIngSearch(e.target.value); setScanStatus(null); }} />
-              <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowManualLog(true)}>Manual</button>
-            </div>
-            {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
-            {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
-            {ingSearch && (<div className="ing-list">
-              {libFiltered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
-              {libFiltered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingItem(i); setAddAmt(String(i.servingSize || 100)); setIngSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
-            </div>)}
-          </>)}
-          {logItems.map(item => {
-            const cal = Math.round(item.p100.cal * item.amount / 100);
-            return (
-              <div key={item.id} className="ing-chip">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{item.name}</div>
-                  <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "Space Mono,monospace", marginTop: 2 }}>{item.amount}g · {cal} kcal</div>
-                </div>
-                <button className="del-btn" onClick={() => setLogItems(p => p.filter(x => x.id !== item.id))}>✕</button>
-              </div>
-            );
-          })}
-          {logItems.length > 0 && (
-            <div className="preview">
-              <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{ingTotal.cal}</span></span>
-              <span style={{ color: "var(--muted)" }}>PRO <span style={{ color: "var(--text)" }}>{round1(ingTotal.protein)}g</span></span>
-              <span style={{ color: "var(--muted)" }}>CARB <span style={{ color: "var(--text)" }}>{round1(ingTotal.carbs)}g</span></span>
-              <span style={{ color: "var(--muted)" }}>FAT <span style={{ color: "var(--text)" }}>{round1(ingTotal.fat)}g</span></span>
-            </div>
-          )}
-          <div className="modal-actions">
-            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={logItems.length === 0} onClick={() => onSave({ id: uid(), name: `Custom · ${logItems.length} ingredient${logItems.length !== 1 ? "s" : ""}`, ...ingTotal, ingredients: logItems })}>Log It</button>
-          </div>
-        </>)}
-        {tab === "quick" && (<>
-          <label className="lbl">Name</label>
-          <input className="inp" placeholder="e.g. Protein Bar" value={quick.name} onChange={setQ("name")} />
-          <div className="grid2">
-            <div><label className="lbl">Calories</label><input className="inp" type="number" placeholder="150" value={quick.cal} onChange={setQ("cal")} /></div>
-            <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="28" value={quick.protein} onChange={setQ("protein")} /></div>
-            <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="12" value={quick.carbs} onChange={setQ("carbs")} /></div>
-            <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="2" value={quick.fat} onChange={setQ("fat")} /></div>
-          </div>
-          <div className="modal-actions">
-            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn btn-primary" disabled={!quick.name || !quick.cal} onClick={() => onSave({ id: uid(), name: quick.name, cal: +quick.cal, protein: +quick.protein || 0, carbs: +quick.carbs || 0, fat: +quick.fat || 0 })}>Log It</button>
-          </div>
-        </>)}
-      </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
-    </div>
-  );
-}
-
-// ── Edit Custom Entry Modal ───────────────────────────────────
-function EditCustomEntryModal({ entry, ingredients, onSave, onClose }) {
-  const [editItems, setEditItems] = useState(entry.ingredients || []);
-  const [ingSearch, setIngSearch] = useState("");
-  const [addingItem, setAddingItem] = useState(null);
-  const [addAmt, setAddAmt] = useState("100");
-  const [scanStatus, setScanStatus] = useState(null);
-  const [showManual, setShowManual] = useState(false);
-  const [manualForm, setManualForm] = useState({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-  const setMF = k => e => setManualForm(f => ({ ...f, [k]: e.target.value }));
-  const manualCal = Math.round((+manualForm.protein || 0) * 4 + (+manualForm.carbs || 0) * 4 + (+manualForm.fat || 0) * 9);
-  const libFiltered = ingredients.filter(i => i.name.toLowerCase().includes(ingSearch.toLowerCase()));
-  const total = editItems.reduce((acc, item) => {
-    const r = item.amount / 100;
-    return { cal: acc.cal + Math.round(item.p100.cal * r), protein: round1(acc.protein + item.p100.protein * r), carbs: round1(acc.carbs + item.p100.carbs * r), fat: round1(acc.fat + item.p100.fat * r) };
-  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
-  const updateAmt = (id, val) => setEditItems(p => p.map(x => x.id === id ? { ...x, amount: +val || 0 } : x));
-  const confirmAdd = () => {
-    if (!addingItem || !addAmt) return;
-    setEditItems(p => [...p, { id: uid(), name: addingItem.name, p100: addingItem.p100, amount: +addAmt }]);
-    setAddingItem(null); setAddAmt("100"); setIngSearch("");
-  };
-  const confirmManual = () => {
-    if (!manualForm.name) return;
-    const amt = +manualForm.amount || 100;
-    const pro = +manualForm.protein || 0, carb = +manualForm.carbs || 0, fat = +manualForm.fat || 0;
-    const cal = Math.round(pro * 4 + carb * 4 + fat * 9);
-    const p100 = { cal: Math.round(cal * 100 / amt), protein: round1(pro * 100 / amt), carbs: round1(carb * 100 / amt), fat: round1(fat * 100 / amt) };
-    setEditItems(prev => [...prev, { id: uid(), name: manualForm.name, amount: amt, p100 }]);
-    setManualForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" });
-    setShowManual(false);
-  };
-  const { cameraOpen, openCamera, closeCamera, videoRef } = useCameraScanner(async (val) => {
-    setScanStatus("loading");
-    const found = await lookupOFF(val);
-    if (found) { setScanStatus(null); setAddAmt(String(found.servingSize || 100)); setAddingItem({ name: found.name, p100: found.p100 }); }
-    else setScanStatus("err");
-  });
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">Edit Entry <button className="icon-btn" onClick={onClose}>✕</button></div>
-        {editItems.map(item => {
-          const cal = Math.round(item.p100.cal * item.amount / 100);
-          return (
-            <div key={item.id} className="ing-chip">
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 13 }}>{item.name}</div>
-                <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "Space Mono,monospace", marginTop: 2 }}>{cal} kcal</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <input type="number" value={item.amount} onChange={e => updateAmt(item.id, e.target.value)} style={{ width: 56, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 6px", color: "var(--text)", fontFamily: "Space Mono,monospace", fontSize: 13, textAlign: "right", outline: "none" }} />
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>g</span>
-                <button className="del-btn" onClick={() => setEditItems(p => p.filter(x => x.id !== item.id))}>✕</button>
-              </div>
-            </div>
-          );
-        })}
-        {editItems.length > 0 && (
-          <div className="preview">
-            <span style={{ color: "var(--muted)" }}>CAL <span style={{ color: "var(--text)" }}>{total.cal}</span></span>
-            <span style={{ color: "var(--muted)" }}>PRO <span style={{ color: "var(--text)" }}>{round1(total.protein)}g</span></span>
-            <span style={{ color: "var(--muted)" }}>CARB <span style={{ color: "var(--text)" }}>{round1(total.carbs)}g</span></span>
-            <span style={{ color: "var(--muted)" }}>FAT <span style={{ color: "var(--text)" }}>{round1(total.fat)}g</span></span>
-          </div>
-        )}
-        <div style={{ height: 1, background: "var(--border)", margin: "8px 0 12px" }} />
-        {addingItem ? (
-          <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{addingItem.name}</div>
-            <label className="lbl">Amount (grams)</label>
-            <input className="inp" type="number" placeholder="100" value={addAmt} onChange={e => setAddAmt(e.target.value)} autoFocus />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setAddingItem(null); setAddAmt("100"); }}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={confirmAdd}>Add</button>
-            </div>
-          </div>
-        ) : showManual ? (
-          <div style={{ background: "var(--card)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Manual Entry</div>
-            <label className="lbl">Name</label>
-            <input className="inp" placeholder="Ingredient name" value={manualForm.name} onChange={setMF("name")} autoFocus />
-            <div className="grid2">
-              <div><label className="lbl">Amount (g)</label><input className="inp" type="number" placeholder="100" value={manualForm.amount} onChange={setMF("amount")} /></div>
-              <div><label className="lbl">Calories (auto)</label><input className="inp" value={manualCal ? manualCal + " kcal" : "—"} readOnly style={{ color: "var(--accent)", cursor: "default" }} /></div>
-              <div><label className="lbl">Protein (g)</label><input className="inp" type="number" placeholder="0" value={manualForm.protein} onChange={setMF("protein")} /></div>
-              <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" placeholder="0" value={manualForm.carbs} onChange={setMF("carbs")} /></div>
-              <div><label className="lbl">Fat (g)</label><input className="inp" type="number" placeholder="0" value={manualForm.fat} onChange={setMF("fat")} /></div>
-            </div>
-            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setShowManual(false); setManualForm({ name: "", amount: "100", protein: "", carbs: "", fat: "" }); }}>Cancel</button>
-              <button className="btn btn-primary btn-sm" disabled={!manualForm.name} onClick={confirmManual}>Add</button>
-            </div>
-          </div>
-        ) : (<>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <input className="inp" style={{ margin: 0, flex: 1 }} placeholder="Add ingredient…" value={ingSearch} onChange={e => { setIngSearch(e.target.value); setScanStatus(null); }} />
-            <button className="btn btn-ghost btn-sm" style={{ padding: "6px 10px" }} onClick={openCamera} title="Scan barcode"><CameraIcon /></button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowManual(true)}>Manual</button>
-          </div>
-          {scanStatus === "loading" && <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, textAlign: "center" }}>Looking up barcode…</div>}
-          {scanStatus === "err" && <div style={{ background: "rgba(255,107,107,0.1)", border: "1px solid rgba(255,107,107,0.3)", borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "var(--danger)" }}>Barcode not found — search manually.</div>}
-          {ingSearch && (<div className="ing-list">
-            {libFiltered.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--muted)" }}>No matches</div>}
-            {libFiltered.map(i => <div key={i.id} className="ing-result" onClick={() => { setAddingItem(i); setAddAmt(String(i.servingSize || 100)); setIngSearch(""); setScanStatus(null); }}>{i.name} <span style={{ color: "var(--muted)", fontSize: 11 }}>— {i.p100.cal} kcal/100g</span></div>)}
-          </div>)}
-        </>)}
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={editItems.length === 0} onClick={() => onSave({ ...entry, name: `Custom · ${editItems.length} ingredient${editItems.length !== 1 ? "s" : ""}`, ...total, ingredients: editItems })}>Save</button>
-        </div>
-      </div>
-      {cameraOpen && <CameraOverlay videoRef={videoRef} onClose={closeCamera} />}
-    </div>
-  );
-}
-
-// ── Targets Modal ─────────────────────────────────────────────
-function TargetsModal({ targets, onSave, onClose }) {
-  const [form, setForm] = useState(targets);
-  const set = k => e => setForm(f => ({ ...f, [k]: +e.target.value }));
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-title">Daily Targets <button className="icon-btn" onClick={onClose}>✕</button></div>
-        <div className="grid2">
-          <div><label className="lbl">Calories</label><input className="inp" type="number" value={form.cal} onChange={set("cal")} /></div>
-          <div><label className="lbl">Protein (g)</label><input className="inp" type="number" value={form.protein} onChange={set("protein")} /></div>
-          <div><label className="lbl">Carbs (g)</label><input className="inp" type="number" value={form.carbs} onChange={set("carbs")} /></div>
-          <div><label className="lbl">Fat (g)</label><input className="inp" type="number" value={form.fat} onChange={set("fat")} /></div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => onSave(form)}>Save</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Main App ──────────────────────────────────────────────────
 export default function App() {
-  const [session, setSession] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const { session, setSession, authLoading } = useAuthSession();
   const [tab, setTab] = useState("today");
-  const [ingredients, setIngredients] = useState([]);
-  const [meals, setMeals] = useState([]);
-  const [log, setLog] = useState({});
-  const [targets, setTargets] = useState({ cal: 1673, protein: 150, carbs: 155, fat: 50 });
-  const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [editMeal, setEditMeal] = useState(null);
   const [editIng, setEditIng] = useState(null);
@@ -792,287 +32,212 @@ export default function App() {
   const [editingHistoryDay, setEditingHistoryDay] = useState(null);
   const [historyLogDate, setHistoryLogDate] = useState(null);
   const [editCustomEntry, setEditCustomEntry] = useState(null);
-
-  const showToast = (ok) => { setToast(ok ? "saved" : "error"); setTimeout(() => setToast(null), 2000); };
-
-  // Auth listener
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoading(false); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => subscription.unsubscribe();
+  const [editServingEntry, setEditServingEntry] = useState(null);
+  const [editHistoryEntry, setEditHistoryEntry] = useState(null);
+  const showToast = useCallback(ok => {
+    setToast(ok ? "saved" : "error");
+    setTimeout(() => setToast(null), 2000);
   }, []);
-
-  // Load data from Supabase
-  useEffect(() => {
-    if (!session) return;
-    const uid = session.user.id;
-    (async () => {
-      setLoading(true);
-      const [{ data: ingRows }, { data: mealRows }, { data: logRows, error: logError }, { data: tgtRow }] = await Promise.all([
-        supabase.from("ingredients").select("*").eq("user_id", uid),
-        supabase.from("meals").select("*").eq("user_id", uid),
-        supabase.from("food_log").select("*").eq("user_id", uid),
-        supabase.from("targets").select("*").eq("user_id", uid).single(),
-      ]);
-
-      if (ingRows?.length) setIngredients(ingRows.map(r => r.data));
-      else {
-        setIngredients(DEFAULT_INGS);
-        await Promise.all(DEFAULT_INGS.map(ing => supabase.from("ingredients").upsert({ id: ing.id, user_id: uid, data: ing })));
-      }
-      if (mealRows?.length) setMeals(mealRows.map(r => r.data));
-      else {
-        setMeals(DEFAULT_MEALS);
-        await Promise.all(DEFAULT_MEALS.map(m => supabase.from("meals").upsert({ id: m.id, user_id: uid, data: m })));
-      }
-
-      if (logError) console.error("food_log fetch error:", logError);
-
-      const logObj = {};
-      (logRows || []).forEach(r => { logObj[r.id] = r.data || []; });
-
-      const SEED = {
-        "2026-04-21": [
-          { id: "s21a", name: "🍗 Honey Chilli Chicken + Rice", cal: 769, protein: 73,   carbs: 88.9, fat: 10.6 },
-          { id: "s21b", name: "🍫 Protein Bar",                  cal: 150, protein: 28,   carbs: 12,   fat: 2    },
-          { id: "s21c", name: "🥪 Sandwich",                     cal: 245, protein: 26,   carbs: 18,   fat: 8.5  },
-        ],
-        "2026-04-22": [
-          { id: "s22a", name: "🍗 Honey Chilli Chicken + Rice", cal: 769, protein: 73,   carbs: 88.9, fat: 10.6 },
-          { id: "s22b", name: "🌮 Taco Beef Pita",              cal: 314, protein: 29,   carbs: 22,   fat: 13.5 },
-          { id: "s22c", name: "🍿 Protein Chips (1 bag)",       cal: 140, protein: 19,   carbs: 5,    fat: 5    },
-        ],
-      };
-      const seedUpserts = [];
-      for (const [date, entries] of Object.entries(SEED)) {
-        if (!logObj[date]) {
-          logObj[date] = entries;
-          seedUpserts.push(supabase.from("food_log").upsert({ id: date, user_id: uid, data: entries }));
-        }
-      }
-      if (seedUpserts.length) await Promise.all(seedUpserts);
-
-      setLog(logObj);
-      if (tgtRow) setTargets(tgtRow.data);
-      setLoading(false);
-    })();
-  }, [session]);
-
-  const userId = session?.user?.id;
-
-  const saveIngs = async (d) => {
-    setIngredients(d);
-    await Promise.all(d.map(ing => supabase.from("ingredients").upsert({ id: ing.id, user_id: userId, data: ing })));
-    showToast(true);
-  };
-  const saveMeals = async (d) => {
-    setMeals(d);
-    await Promise.all(d.map(m => supabase.from("meals").upsert({ id: m.id, user_id: userId, data: m })));
-    showToast(true);
-  };
-  const saveLog = async (d) => {
-    setLog(d);
-    await Promise.all(Object.entries(d).map(([dateKey, entries]) =>
-      supabase.from("food_log").upsert({ id: dateKey, user_id: userId, data: entries })
-    ));
-    showToast(true);
-  };
-  const saveTgts = async (d) => {
-    setTargets(d);
-    await supabase.from("targets").upsert({ user_id: userId, data: d });
-    showToast(true);
-  };
+  const {
+    ingredients,
+    setIngredients,
+    meals,
+    setMeals,
+    log,
+    targets,
+    loading,
+    loadError,
+    userId,
+    mutationFailed,
+    saveIngredient,
+    saveMeal,
+    saveLogDay,
+    saveTargets,
+  } = useMacroData(session, showToast);
+  const { deleteConfirmation, confirmDelete, finishDeleteConfirmation } = useDeleteConfirmation();
 
   const today = todayStr();
   const todayLog = log[today] || [];
-  const totals = todayLog.reduce((a, e) => ({ cal: a.cal + e.cal, protein: a.protein + e.protein, carbs: a.carbs + e.carbs, fat: a.fat + e.fat }), { cal: 0, protein: 0, carbs: 0, fat: 0 });
+  const macroIngredients = [...ingredients, ...DEFAULT_INGS.filter(fallback => !ingredients.some(item => item.id === fallback.id))];
+  const entryMacros = entry => calcLoggedMacros(entry, meals, macroIngredients);
+  const totals = sumMacros(todayLog, entryMacros);
   const deficit = targets.cal - totals.cal;
+  const historyDayData = getHistoryDays(log, today).map(day => ({
+    day,
+    entries: log[day] || [],
+    totals: sumMacros(log[day] || [], entryMacros),
+  }));
 
-  const handleLogEntry = entry => { saveLog({ ...log, [today]: [...(log[today] || []), entry] }); setModal(null); };
-  const handleHistoryLogEntry = entry => { const d = historyLogDate; saveLog({ ...log, [d]: [...(log[d] || []), entry] }); setModal(null); setHistoryLogDate(null); };
-  const deleteLogEntry = id => saveLog({ ...log, [today]: (log[today] || []).filter(e => e.id !== id) });
-  const handleEditCustomEntry = updated => { saveLog({ ...log, [today]: (log[today] || []).map(e => e.id === updated.id ? updated : e) }); setEditCustomEntry(null); };
-  const handleSaveMeal = meal => { saveMeals(editMeal ? meals.map(m => m.id === meal.id ? meal : m) : [...meals, meal]); setModal(null); setEditMeal(null); };
-  const handleSaveIng = ing => { saveIngs(editIng ? ingredients.map(i => i.id === ing.id ? ing : i) : [...ingredients, ing]); setModal(null); setEditIng(null); };
-  const deleteMeal = async id => { setMeals(p => p.filter(m => m.id !== id)); await supabase.from("meals").delete().eq("id", id); };
-  const deleteIng = async id => { setIngredients(p => p.filter(i => i.id !== id)); await supabase.from("ingredients").delete().eq("id", id); };
+  const handleLogEntry = async entry => {
+    if (await saveLogDay(today, [...(log[today] || []), entry])) setModal(null);
+  };
+  const handleHistoryLogEntry = async entry => {
+    const day = historyLogDate;
+    if (await saveLogDay(day, [...(log[day] || []), entry])) {
+      setModal(null);
+      setHistoryLogDate(null);
+      setEditingHistoryDay(day);
+    }
+  };
+  const deleteLogEntry = async id => {
+    const entry = (log[today] || []).find(item => item.id === id);
+    if (!await confirmDelete(entry?.name || "this food entry")) return false;
+    return saveLogDay(today, (log[today] || []).filter(item => item.id !== id));
+  };
+  const handleEditCustomEntry = async updated => {
+    const entries = (log[today] || []).map(entry => entry.id === updated.id ? updated : entry);
+    if (await saveLogDay(today, entries)) setEditCustomEntry(null);
+  };
+  const handleEditServingEntry = async updated => {
+    const entries = (log[today] || []).map(entry => entry.id === updated.id ? updated : entry);
+    if (await saveLogDay(today, entries)) setEditServingEntry(null);
+  };
+  const editTodayEntry = entry => {
+    if (entry.mealId) setEditServingEntry(entry);
+    else if (entry.ingredients) setEditCustomEntry(entry);
+  };
+  const handleEditHistoryEntry = async updated => {
+    const day = editHistoryEntry.day;
+    const entries = (log[day] || []).map(entry => entry.id === updated.id ? updated : entry);
+    if (await saveLogDay(day, entries)) setEditHistoryEntry(null);
+  };
+  const handleCreateHistoryDay = async day => {
+    const validationError = validateNewHistoryDay(day, today, Object.keys(log));
+    if (validationError) return { ok: false, message: validationError };
+    setHistoryLogDate(day);
+    setModal("log");
+    return { ok: true };
+  };
+  const handleSaveMeal = async meal => {
+    const duplicateInState = findDuplicateMeal(meal, meals, ingredients);
+    if (duplicateInState) {
+      return { ok: false, message: `This composition is already saved as “${duplicateInState.name}”.` };
+    }
+
+    const { data: databaseMeals, error: duplicateCheckError } = await supabase
+      .from("meals")
+      .select("id,data")
+      .eq("user_id", userId);
+    if (duplicateCheckError) {
+      console.error("Failed to check meal duplicates:", duplicateCheckError);
+      return { ok: false, message: "Could not check saved meals. Please try again." };
+    }
+    const duplicateInDatabase = findDuplicateMeal(meal, (databaseMeals || []).map(row => row.data), ingredients);
+    if (duplicateInDatabase) {
+      return { ok: false, message: `This composition is already saved as “${duplicateInDatabase.name}”.` };
+    }
+
+    const nextMeals = editMeal ? meals.map(item => item.id === meal.id ? meal : item) : [...meals, meal];
+    if (await saveMeal(meal, nextMeals)) {
+      setModal(null);
+      setEditMeal(null);
+      return { ok: true };
+    }
+    return { ok: false, message: "Could not save the meal. Please try again." };
+  };
+  const handleSaveIng = async ingredient => {
+    const normalizedName = normalizeIngredientName(ingredient.name);
+    const normalizedBarcode = ingredient.barcode || null;
+    const duplicateInState = ingredients.find(item => item.id !== ingredient.id && normalizeIngredientName(item.name) === normalizedName);
+    if (duplicateInState) {
+      return { ok: false, message: `“${duplicateInState.name}” is already in your ingredient library.` };
+    }
+    const barcodeInState = normalizedBarcode && ingredients.find(item => item.id !== ingredient.id && item.barcode === normalizedBarcode);
+    if (barcodeInState) {
+      return { ok: false, message: `Barcode ${normalizedBarcode} is already assigned to “${barcodeInState.name}”.` };
+    }
+
+    const { data: databaseIngredients, error: duplicateCheckError } = await supabase
+      .from("ingredients")
+      .select("id,data")
+      .eq("user_id", userId);
+    if (duplicateCheckError) {
+      console.error("Failed to check ingredient duplicates:", duplicateCheckError);
+      return { ok: false, message: "Could not check the ingredient library. Please try again." };
+    }
+    const duplicateInDatabase = databaseIngredients?.find(row => row.id !== ingredient.id && normalizeIngredientName(row.data?.name) === normalizedName);
+    if (duplicateInDatabase) {
+      return { ok: false, message: `“${duplicateInDatabase.data.name}” already exists in the database.` };
+    }
+    const barcodeInDatabase = normalizedBarcode && databaseIngredients?.find(row => row.id !== ingredient.id && row.data?.barcode === normalizedBarcode);
+    if (barcodeInDatabase) {
+      return { ok: false, message: `Barcode ${normalizedBarcode} is already assigned to “${barcodeInDatabase.data.name}”.` };
+    }
+
+    const nextIngredients = editIng ? ingredients.map(item => item.id === ingredient.id ? ingredient : item) : [...ingredients, ingredient];
+    if (await saveIngredient(ingredient, nextIngredients)) {
+      setModal(null);
+      setEditIng(null);
+      return { ok: true };
+    }
+    return { ok: false, message: "Could not save the ingredient. Please try again." };
+  };
+  const deleteMeal = async id => {
+    const meal = meals.find(item => item.id === id);
+    if (!await confirmDelete(meal?.name || "this meal")) return false;
+    const { error } = await supabase.from("meals").delete().eq("id", id).eq("user_id", userId);
+    if (error) return mutationFailed("Failed to delete meal", error);
+    setMeals(previous => previous.filter(meal => meal.id !== id));
+    showToast(true);
+  };
+  const deleteIng = async id => {
+    const ingredient = ingredients.find(item => item.id === id);
+    if (!await confirmDelete(ingredient?.name || "this ingredient")) return false;
+    const { error } = await supabase.from("ingredients").delete().eq("id", id).eq("user_id", userId);
+    if (error) return mutationFailed("Failed to delete ingredient", error);
+    setIngredients(previous => previous.filter(ingredient => ingredient.id !== id));
+    showToast(true);
+  };
+  const handleSaveTargets = async nextTargets => {
+    if (await saveTargets(nextTargets)) setModal(null);
+  };
 
   if (authLoading) return <div style={{ background: "#080c0a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#4a5e4b", fontFamily: "sans-serif" }}>Loading…</div>;
   if (!session) return <AuthScreen onAuth={setSession} />;
   if (loading) return <div style={{ background: "#080c0a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#4a5e4b", fontFamily: "sans-serif" }}>Loading your data…</div>;
+  if (loadError) return <div style={{ background: "#080c0a", minHeight: "100vh", display: "flex", flexDirection: "column", gap: 14, alignItems: "center", justifyContent: "center", color: "#ff6b6b", fontFamily: "sans-serif", padding: 24, textAlign: "center" }}><div>Could not load your data.</div><div style={{ color: "#4a5e4b", fontSize: 12 }}>{loadError}</div><button className="btn btn-ghost" onClick={() => window.location.reload()}>Retry</button></div>;
 
   return (
     <>
       <style>{STYLES}</style>
       {toast && <div className={`toast ${toast === "saved" ? "toast-ok" : "toast-err"}`}>{toast === "saved" ? "💾 Saved" : "⚠️ Save failed"}</div>}
       <div className="app">
-        <div style={{ flexShrink: 0 }}>
-          <div className="header">
-            <div className="logo">MACRO<span>TRACK</span></div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontFamily: "Space Mono,monospace", fontSize: 11, color: "var(--muted)" }}>{fmtDate(today)}</span>
-              <button className="icon-btn" onClick={() => setModal("targets")}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-              <button className="icon-btn" style={{ fontSize: 14 }} onClick={() => supabase.auth.signOut()} title="Sign out">⏏</button>
-            </div>
-          </div>
-
-          <div className="summary">
-            <div className="cal-row">
-              <span className="cal-num">{Math.round(totals.cal)}</span>
-              <span className="cal-sub">kcal</span>
-              <span className="cal-target">/ {targets.cal}</span>
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ width: "100%", height: 8, background: "var(--card)", borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 4, background: totals.cal > targets.cal ? "var(--danger)" : "var(--accent)", width: `${Math.min((totals.cal / Math.max(targets.cal, 1)) * 100, 100)}%`, transition: "width 0.4s ease" }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontFamily: "Space Mono,monospace", fontSize: 10, color: "var(--muted)" }}>
-                <span>{Math.round((totals.cal / Math.max(targets.cal, 1)) * 100)}% of goal</span>
-                <span>{Math.max(targets.cal - Math.round(totals.cal), 0)} remaining</span>
-              </div>
-            </div>
-            <div className="macro-bars">
-              <MacroBar label="Protein" val={totals.protein} target={targets.protein} color="var(--protein)" />
-              <MacroBar label="Carbs"   val={totals.carbs}   target={targets.carbs}   color="var(--carbs)"   />
-              <MacroBar label="Fat"     val={totals.fat}     target={targets.fat}     color="var(--fat)"     />
-            </div>
-            <div className="deficit">
-              <span style={{ color: "var(--muted)" }}>Remaining</span>
-              <span style={{ color: deficit >= 0 ? "var(--accent)" : "var(--danger)" }}>{deficit >= 0 ? deficit : `+${Math.abs(deficit)}`} kcal</span>
-            </div>
-          </div>
-
-          <div className="tabs">
-            {["today", "meals", "ingredients", "history"].map(t => (
-              <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
+        <DashboardHeader
+          today={today}
+          totals={totals}
+          targets={targets}
+          deficit={deficit}
+          tab={tab}
+          historyDayData={historyDayData}
+          onSelectHistoryDay={setEditingHistoryDay}
+          onTabChange={setTab}
+          onOpenTargets={() => setModal("targets")}
+          onSignOut={() => supabase.auth.signOut()}
+        />
 
         <div className="content" onClick={() => setEditingHistoryDay(null)}>
-
-          {tab === "today" && (<>
-            <div className="sec-hdr"><span className="sec-title">Today's Log</span></div>
-            {todayLog.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="12" y1="9" x2="12" y2="15"/></svg></div><div className="empty-text">Nothing logged yet.<br />Tap + to add food.</div></div>}
-            {todayLog.map(e => (
-              <div key={e.id} className="log-entry" style={{ cursor: e.ingredients ? "pointer" : "default" }} onClick={e.ingredients ? () => setEditCustomEntry(e) : undefined}>
-                <div>
-                  <div className="entry-name">{e.name}{e.ingredients && <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 6 }}>✎</span>}</div>
-                  <div className="entry-macros">P {e.protein}g · C {e.carbs}g · F {e.fat}g</div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span className="entry-cal">{e.cal}</span>
-                  <button className="del-btn" onClick={ev => { ev.stopPropagation(); deleteLogEntry(e.id); }}>✕</button>
-                </div>
-              </div>
-            ))}
-          </>)}
-
-          {tab === "meals" && (<>
-            <div className="sec-hdr">
-              <span className="sec-title">Saved Meals</span>
-              <button className="btn btn-primary btn-sm" onClick={() => { setEditMeal(null); setModal("meal"); }}>+ New</button>
-            </div>
-            {meals.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div><div className="empty-text">No meals yet.</div></div>}
-            {meals.map(m => {
-              const mac = calcMealMacros(m, ingredients);
-              return (
-                <div key={m.id} className="meal-card" onClick={() => { setEditMeal(m); setModal("meal"); }}>
-                  <div style={{ flex: 1 }}>
-                    <div className="meal-card-name">{m.name}</div>
-                    <div className="meal-card-macros">P {mac.protein}g · C {mac.carbs}g · F {mac.fat}g</div>
-                    {m.ingredients?.length > 0 && <div style={{ marginTop: 6 }}>{m.ingredients.map(mi => <span key={mi.id} className="tag">{mi.name} {mi.amount}g</span>)}</div>}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                    <span className="meal-card-cal">{mac.cal}</span>
-                    <button className="del-btn" onClick={e => { e.stopPropagation(); deleteMeal(m.id); }}>✕</button>
-                  </div>
-                </div>
-              );
-            })}
-          </>)}
-
-          {tab === "ingredients" && (<>
-            <div className="sec-hdr">
-              <span className="sec-title">Ingredient Library</span>
-              <button className="btn btn-primary btn-sm" onClick={() => { setEditIng(null); setModal("ingredient"); }}>+ New</button>
-            </div>
-            {ingredients.length === 0 && <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2c-4 4.5-8 8-8 12a8 8 0 0 0 16 0c0-4-4-7.5-8-12z"/><line x1="12" y1="14" x2="12" y2="22"/></svg></div><div className="empty-text">No ingredients yet.</div></div>}
-            {ingredients.map(i => (
-              <div key={i.id} className="log-entry">
-                <div><div className="entry-name">{i.name}</div><div className="entry-macros">per 100g · P {i.p100.protein}g · C {i.p100.carbs}g · F {i.p100.fat}g</div></div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span className="entry-cal">{i.p100.cal}</span>
-                  <button className="del-btn" style={{ fontSize: 13 }} onClick={() => { setEditIng(i); setModal("ingredient"); }}>✎</button>
-                  <button className="del-btn" onClick={() => deleteIng(i.id)}>✕</button>
-                </div>
-              </div>
-            ))}
-          </>)}
-
-          {tab === "history" && (() => {
-            const pastDays = Object.keys(log).filter(d => d !== today).sort((a, b) => b.localeCompare(a));
-            if (!pastDays.length) return <div className="empty"><div className="empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div className="empty-text">No history yet.<br />Past days will appear here.</div></div>;
-            return pastDays.map(d => {
-              const entries = log[d] || [];
-              const tot = entries.reduce((a, e) => ({ cal: a.cal + e.cal, protein: a.protein + e.protein, carbs: a.carbs + e.carbs, fat: a.fat + e.fat }), { cal: 0, protein: 0, carbs: 0, fat: 0 });
-              const pct = Math.min((tot.cal / Math.max(targets.cal, 1)) * 100, 100);
-              const over = tot.cal > targets.cal;
-              const isEditing = editingHistoryDay === d;
-              return (
-                <div key={d} style={{ background: "var(--surface)", border: `1px solid ${isEditing ? "var(--accent)" : "var(--border)"}`, borderRadius: 14, padding: 14, marginBottom: 10, cursor: isEditing ? "default" : "pointer", transition: "border-color 0.2s" }}
-                  onClick={e => { e.stopPropagation(); if (!isEditing) setEditingHistoryDay(d); }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                    <span style={{ fontWeight: 800, fontSize: 14 }}>{fmtDate(d)}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{ fontFamily: "Space Mono,monospace", fontSize: 16, fontWeight: 700, color: over ? "var(--danger)" : "var(--accent)" }}>
-                        {Math.round(tot.cal)} <span style={{ fontSize: 10, color: "var(--muted)" }}>/ {targets.cal} kcal</span>
-                      </span>
-                      {isEditing && <button className="icon-btn" style={{ fontSize: 13 }} onClick={e => { e.stopPropagation(); setEditingHistoryDay(null); }}>✕</button>}
-                    </div>
-                  </div>
-                  <div style={{ width: "100%", height: 6, background: "var(--card)", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
-                    <div style={{ height: "100%", borderRadius: 3, width: `${pct}%`, background: over ? "var(--danger)" : "var(--accent)", transition: "width 0.4s" }} />
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "Space Mono,monospace", fontSize: 10, color: "var(--muted)", marginBottom: 10 }}>
-                    <span>P <span style={{ color: "var(--protein)" }}>{Math.round(tot.protein)}g</span></span>
-                    <span>C <span style={{ color: "var(--carbs)" }}>{Math.round(tot.carbs)}g</span></span>
-                    <span>F <span style={{ color: "var(--fat)" }}>{Math.round(tot.fat)}g</span></span>
-                    <span style={{ color: over ? "var(--danger)" : "var(--accent)" }}>{over ? `+${Math.round(tot.cal - targets.cal)}` : `-${Math.round(targets.cal - tot.cal)}`} kcal</span>
-                  </div>
-                  {entries.map(e => (
-                    <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: "1px solid var(--border)" }}>
-                      <span style={{ fontSize: 12, color: "var(--text)" }}>{e.name}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontFamily: "Space Mono,monospace", fontSize: 11, color: "var(--accent)" }}>{e.cal}</span>
-                        {isEditing && <button className="del-btn" onClick={ev => { ev.stopPropagation(); const updated = { ...log, [d]: log[d].filter(x => x.id !== e.id) }; saveLog(updated); }}>✕</button>}
-                      </div>
-                    </div>
-                  ))}
-                  {isEditing && (
-                    <button className="btn btn-primary btn-sm" style={{ marginTop: 12, width: "100%" }}
-                      onClick={e => { e.stopPropagation(); setHistoryLogDate(d); setModal("log"); }}>
-                      + Add Food
-                    </button>
-                  )}
-                </div>
-              );
-            });
-          })()}
+          {tab === "today" && <TodayScreen entries={todayLog} getMacros={entryMacros} onAdd={() => setModal("log")} onEdit={editTodayEntry} onDelete={deleteLogEntry} />}
+          {tab === "meals" && <MealsScreen meals={meals} macroIngredients={macroIngredients} onEdit={meal => { setEditMeal(meal); setModal("meal"); }} onDelete={deleteMeal} />}
+          {tab === "ingredients" && <IngredientsScreen ingredients={ingredients} onEdit={ingredient => { setEditIng(ingredient); setModal("ingredient"); }} onDelete={deleteIng} />}
+          {tab === "history" && <HistoryScreen dayData={historyDayData} today={today} targets={targets} getMacros={entryMacros} editingDay={editingHistoryDay} onEditingDayChange={setEditingHistoryDay} confirmDelete={confirmDelete} saveLogDay={saveLogDay} onAddFood={day => { setHistoryLogDate(day); setModal("log"); }} onEditEntry={(day, entry) => setEditHistoryEntry({ day, entry })} />}
         </div>
 
         {tab === "today"       && <button className="fab" onClick={() => setModal("log")}>+</button>}
         {tab === "meals"       && <button className="fab" onClick={() => { setEditMeal(null); setModal("meal"); }}>+</button>}
         {tab === "ingredients" && <button className="fab" onClick={() => { setEditIng(null); setModal("ingredient"); }}>+</button>}
-        {tab === "history"     && <button className="fab" onClick={() => setTab("today")}>←</button>}
+        {tab === "history"     && <button className="fab" aria-label="Add history day" onClick={() => setModal("history-day")}>+</button>}
 
-        {editCustomEntry && <EditCustomEntryModal entry={editCustomEntry} ingredients={ingredients} onSave={handleEditCustomEntry} onClose={() => setEditCustomEntry(null)} />}
-        {modal === "log"        && <LogModal meals={meals} ingredients={ingredients} onSave={historyLogDate ? handleHistoryLogEntry : handleLogEntry} onClose={() => { setModal(null); setHistoryLogDate(null); }} />}
-        {modal === "meal"       && <MealModal allIngredients={ingredients} existing={editMeal} onSave={handleSaveMeal} onClose={() => { setModal(null); setEditMeal(null); }} />}
+        {editCustomEntry && <EditCustomEntryModal entry={editCustomEntry} ingredients={ingredients} confirmDelete={confirmDelete} onSave={handleEditCustomEntry} onClose={() => setEditCustomEntry(null)} />}
+        {editServingEntry && <EditServingModal entry={editServingEntry} meal={meals.find(item => item.id === editServingEntry.mealId)} ingredients={macroIngredients} onSave={handleEditServingEntry} onClose={() => setEditServingEntry(null)} />}
+        {editHistoryEntry?.entry?.mealId && <EditServingModal entry={editHistoryEntry.entry} meal={meals.find(item => item.id === editHistoryEntry.entry.mealId)} ingredients={macroIngredients} onSave={handleEditHistoryEntry} onClose={() => setEditHistoryEntry(null)} />}
+        {editHistoryEntry?.entry?.ingredients && <EditCustomEntryModal entry={editHistoryEntry.entry} ingredients={ingredients} confirmDelete={confirmDelete} onSave={handleEditHistoryEntry} onClose={() => setEditHistoryEntry(null)} />}
+        {editHistoryEntry?.entry && !editHistoryEntry.entry.mealId && !editHistoryEntry.entry.ingredients && <EditQuickEntryModal entry={editHistoryEntry.entry} onSave={handleEditHistoryEntry} onClose={() => setEditHistoryEntry(null)} />}
+        {modal === "log"        && <LogModal meals={meals} ingredients={ingredients} confirmDelete={confirmDelete} onSave={historyLogDate ? handleHistoryLogEntry : handleLogEntry} onClose={() => { setModal(null); setHistoryLogDate(null); }} />}
+        {modal === "meal"       && <MealModal allIngredients={ingredients} existing={editMeal} confirmDelete={confirmDelete} onSave={handleSaveMeal} onClose={() => { setModal(null); setEditMeal(null); }} />}
         {modal === "ingredient" && <IngredientModal existing={editIng} onSave={handleSaveIng} onClose={() => { setModal(null); setEditIng(null); }} />}
-        {modal === "targets"    && <TargetsModal targets={targets} onSave={t => { saveTgts(t); setModal(null); }} onClose={() => setModal(null)} />}
+        {modal === "targets"    && <TargetsModal targets={targets} onSave={handleSaveTargets} onClose={() => setModal(null)} />}
+        {modal === "history-day" && <AddHistoryDayModal today={today} existingDays={historyDayData.map(item => item.day)} onSave={handleCreateHistoryDay} onClose={() => setModal(null)} />}
+        {deleteConfirmation && <ConfirmDeleteModal name={deleteConfirmation.name} onCancel={() => finishDeleteConfirmation(false)} onConfirm={() => finishDeleteConfirmation(true)} />}
       </div>
     </>
   );
